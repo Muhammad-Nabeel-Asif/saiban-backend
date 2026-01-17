@@ -14,20 +14,22 @@ export class PaymentService {
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntryDocument>,
     @InjectModel(Order.name) private readonly orderModel: Model<OrderSchemaDocument>,
   ) {}
-  async recordPayment(
-    createPaymentDto: CreatePaymentDto,
-  ) {
-    const { customerId, orderId, amount, paymentMethod, reference, note} = createPaymentDto
-    const session = await this.orderModel.db.startSession();
+  async recordPayment(createPaymentDto: CreatePaymentDto) {
+    const { customerId, orderId, amount, paymentMethod, reference, note } = createPaymentDto;
+    const session = await this.paymentModel.db.startSession();
     session.startTransaction();
 
     try {
-      const order = await this.orderModel.findById(orderId).session(session);
-      if (!order) throw new NotFoundException('Order not found');
+      // Validate order if orderId is provided
+      if (orderId) {
+        const order = await this.orderModel.findById(orderId).session(session);
+        if (!order) throw new NotFoundException('Order not found');
+      }
 
+      // Create payment record
       const payment = new this.paymentModel({
         customerId,
-        orderId,
+        orderId: orderId || null,
         amount,
         paymentMethod,
         reference,
@@ -35,7 +37,7 @@ export class PaymentService {
       });
       await payment.save({ session });
 
-      // Ledger CREDIT
+      // Create Ledger CREDIT entry
       const ledgerEntry = new this.ledgerModel({
         customerId,
         entryType: EntryType.CREDIT,
@@ -44,19 +46,6 @@ export class PaymentService {
         sourceId: payment._id,
       });
       await ledgerEntry.save({ session });
-
-      // Optional: update order status
-      const totalPaid = await this.paymentModel
-        .aggregate([
-          { $match: { orderId: order._id } },
-          { $group: { _id: null, total: { $sum: '$amount' } } },
-        ])
-        .session(session);
-
-      if (totalPaid.length && totalPaid[0].total >= order.grandTotal) {
-        order.status = OrderStatus.PAID;
-        await order.save({ session });
-      }
 
       await session.commitTransaction();
       session.endSession();

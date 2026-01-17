@@ -102,6 +102,8 @@ export class CustomerService {
     const [data, total] = await Promise.all([
       this.orderModel
         .find({ customerId })
+        .populate('customerId', 'firstName lastName email')
+        .populate('items.productId', '')
         .skip(skip)
         .limit(limitNum)
         .sort({ createdAt: -1 })

@@ -5,6 +5,7 @@ import { CustomerService } from './customer.service';
 import { Customer, CustomerSchema } from '../../schemas/customer.schema';
 import { Order, OrderSchema } from '../../schemas/order.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema';
+import { LedgerModule } from '../ledger/ledger.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema
       { name: Order.name, schema: OrderSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
     ]),
+    LedgerModule,
   ],
   controllers: [CustomerController],
   providers: [CustomerService],

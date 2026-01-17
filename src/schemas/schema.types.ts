@@ -18,8 +18,7 @@ export enum StockMovementReason {
 
 export enum OrderStatus {
   PENDING = 'pending',
-  CONFIRMED = 'confirmed',
-  PAID = 'paid',
+  COMPLETED = 'completed',
   CANCELLED = 'cancelled',
 }
 

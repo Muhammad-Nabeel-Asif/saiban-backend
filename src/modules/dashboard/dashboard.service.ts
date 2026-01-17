@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { Product } from '../../schemas/product.schema';
+import { Customer } from '../../schemas/customer.schema';
+import { Order } from '../../schemas/order.schema';
+import { OrderStatus } from '../../schemas/schema.types';
+import { LedgerService } from '../ledger/ledger.service';
 
 @Injectable()
 export class DashboardService {
@@ -8,6 +13,7 @@ export class DashboardService {
     @InjectModel(Product.name) private productModel: Model<Product>,
     @InjectModel(Customer.name) private customerModel: Model<Customer>,
     @InjectModel(Order.name) private orderModel: Model<Order>,
+    private ledgerService: LedgerService,
   ) {}
 
   async getDashboardMetrics() {
@@ -19,27 +25,20 @@ export class DashboardService {
       pendingOrders,
       ledgerSummary,
     ] = await Promise.all([
-      this.productModel.countDocuments({ isActive: true }),
-      this.customerModel.countDocuments({ isActive: true }),
+      this.productModel.countDocuments(),
+      this.customerModel.countDocuments(),
       this.orderModel.countDocuments(),
-      this.productModel.find({
-        isActive: true,
-        $expr: { $lte: ['$quantityInStock', '$lowStockThreshold'] },
-      }),
-      this.orderModel.find({ status: OrderStatus.PENDING }).limit(10),
-      this.customerModel.aggregate([
-        {
-          $group: {
-            _id: null,
-            totalReceivable: {
-              $sum: { $cond: [{ $gt: ['$balance', 0] }, '$balance', 0] },
-            },
-            totalPayable: {
-              $sum: { $cond: [{ $lt: ['$balance', 0] }, { $abs: '$balance' }, 0] },
-            },
-          },
-        },
-      ]),
+      this.productModel
+        .find({
+          $expr: { $lte: ['$quantityInStock', '$lowStockThreshold'] },
+        })
+        .limit(20),
+      this.orderModel
+        .find({ status: OrderStatus.PENDING })
+        .populate('customerId', 'firstName lastName')
+        .limit(10)
+        .sort({ createdAt: -1 }),
+      this.ledgerService.getLedgerSummary(),
     ]);
 
     return {
@@ -48,8 +47,9 @@ export class DashboardService {
         totalCustomers,
         totalOrders,
         ledger: {
-          totalReceivable: ledgerSummary[0]?.totalReceivable || 0,
-          totalPayable: ledgerSummary[0]?.totalPayable || 0,
+          totalReceivable: ledgerSummary.totalReceivable,
+          totalDebit: ledgerSummary.totalDebit,
+          totalCredit: ledgerSummary.totalCredit,
         },
       },
       alerts: {
@@ -61,9 +61,12 @@ export class DashboardService {
         })),
         pendingOrders: pendingOrders.map((o) => ({
           id: o._id,
-          orderNumber: o.orderNumber,
-          customerName: o.customerName,
-          amount: o.finalAmount,
+          customerId: o.customerId,
+          customerName: (o.customerId as any)?.firstName
+            ? `${(o.customerId as any).firstName} ${(o.customerId as any).lastName}`
+            : 'Unknown',
+          amount: o.grandTotal,
+          createdAt: (o as any).createdAt,
         })),
       },
     };

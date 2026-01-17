@@ -8,6 +8,7 @@ import { Order, OrderSchema } from '../../schemas/order.schema';
 import { ProductModule } from '../product/product.module';
 import { CustomerModule } from '../customer/customer.module';
 import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema';
+import { Payment, PaymentSchema } from '../../schemas/payment.schema';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema
       { name: StockMovement.name, schema: StockMovementSchema },
       { name: Order.name, schema: OrderSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
+      { name: Payment.name, schema: PaymentSchema },
     ]),
     ProductModule,
     CustomerModule,

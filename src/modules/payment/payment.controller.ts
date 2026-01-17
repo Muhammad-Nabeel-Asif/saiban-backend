@@ -9,7 +9,7 @@ export class PaymentController {
   constructor(private paymentService: PaymentService) {}
 
   @Post()
-  async recordPayment(@Body() createPaymentDto: CreatePaymentDto) {
+  recordPayment(@Body() createPaymentDto: CreatePaymentDto) {
     return this.paymentService.recordPayment(createPaymentDto);
   }
 }

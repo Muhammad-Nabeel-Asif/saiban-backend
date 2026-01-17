@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Product } from '../../schemas/product.schema';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './product.dto';
 import { StockMovement } from '../../schemas/stockMovement.schema';
@@ -167,5 +167,28 @@ export class ProductService {
     } finally {
       await session.endSession();
     }
+  }
+
+  async getAllStock(): Promise<{ productId: string; stock: number }[]> {
+    const result = await this.stockMovementModel.aggregate([
+      {
+        $group: {
+          _id: '$productId',
+          stock: { $sum: '$quantityChange' },
+        },
+      },
+      { $project: { _id: 0, productId: '$_id', stock: 1 } },
+    ]);
+
+    return result;
+  }
+
+  async getProductStock(productId: string): Promise<number> {
+    const result = await this.stockMovementModel.aggregate([
+      { $match: { productId: new Types.ObjectId(productId) } },
+      { $group: { _id: null, stock: { $sum: '$quantityChange' } } },
+    ]);
+
+    return result.length ? result[0].stock : 0;
   }
 }

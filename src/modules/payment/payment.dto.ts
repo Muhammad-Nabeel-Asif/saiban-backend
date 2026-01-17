@@ -1,15 +1,4 @@
-import {
-  IsDate,
-  IsEnum,
-  IsInt,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsPositive,
-  IsString,
-  Min,
-} from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString } from 'class-validator';
 import { PaymentMethod } from '../../schemas/schema.types';
 
 export class CreatePaymentDto {
@@ -17,9 +6,9 @@ export class CreatePaymentDto {
   @IsNotEmpty()
   customerId: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  orderId: string;
+  orderId?: string;
 
   @IsNumber()
   @IsPositive()
@@ -38,30 +27,10 @@ export class CreatePaymentDto {
   note?: string;
 }
 
-export class LedgerQueryDto {
-  @IsOptional()
-  @IsString()
-  customerId?: string;
+export class RevenueQueryDto {
+  @IsNotEmpty()
+  start: Date;
 
-  @IsOptional()
-  @Type(() => Date) // Transforms string "2023-01-01" to Date object
-  @IsDate()
-  startDate?: Date;
-
-  @IsOptional()
-  @Type(() => Date)
-  @IsDate()
-  endDate?: Date;
-
-  @IsOptional()
-  @Type(() => Number) // Transforms string "1" to number 1
-  @IsInt()
-  @Min(1)
-  page?: number = 1;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number = 10;
+  @IsNotEmpty()
+  end: Date;
 }
