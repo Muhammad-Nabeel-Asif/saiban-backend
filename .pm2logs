@@ -1,0 +1,2 @@
+# This file ensures PM2 logs directory exists
+# The logs directory will be created automatically

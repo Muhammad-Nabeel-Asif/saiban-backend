@@ -54,17 +54,6 @@ export class LedgerController {
     );
   }
 
-  @Get('reports/customer-wise')
-  async getCustomerWiseReport(
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ) {
-    return this.ledgerService.getCustomerWiseReport(
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
-    );
-  }
-
   @Get('reports/date-range')
   async getDateRangeReport(@Query() { startDate, endDate }: GetDateRangeReportDto) {
     return this.ledgerService.getDateRangeReport(new Date(startDate), new Date(endDate));
