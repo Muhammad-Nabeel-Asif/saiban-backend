@@ -69,8 +69,18 @@ export class LedgerService {
 
     if (startDate || endDate) {
       filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = startDate;
-      if (endDate) filter.createdAt.$lte = endDate;
+      if (startDate) {
+        // Set to start of day in UTC
+        const start = new Date(startDate);
+        start.setUTCHours(0, 0, 0, 0);
+        filter.createdAt.$gte = start;
+      }
+      if (endDate) {
+        // Set to end of day in UTC to include entire day
+        const end = new Date(endDate);
+        end.setUTCHours(23, 59, 59, 999);
+        filter.createdAt.$lte = end;
+      }
     }
 
     const [entries, total] = await Promise.all([
@@ -133,8 +143,18 @@ export class LedgerService {
 
     if (startDate || endDate) {
       filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = startDate;
-      if (endDate) filter.createdAt.$lte = endDate;
+      if (startDate) {
+        // Set to start of day in UTC
+        const start = new Date(startDate);
+        start.setUTCHours(0, 0, 0, 0);
+        filter.createdAt.$gte = start;
+      }
+      if (endDate) {
+        // Set to end of day in UTC to include entire day
+        const end = new Date(endDate);
+        end.setUTCHours(23, 59, 59, 999);
+        filter.createdAt.$lte = end;
+      }
     }
 
     const [entries, total] = await Promise.all([
@@ -159,94 +179,6 @@ export class LedgerService {
         pages: Math.ceil(total / limit),
       },
     };
-  }
-
-  async getCustomerWiseReport(startDate?: Date, endDate?: Date) {
-    const matchStage: any = {};
-
-    if (startDate || endDate) {
-      matchStage.createdAt = {};
-      if (startDate) matchStage.createdAt.$gte = startDate;
-      if (endDate) matchStage.createdAt.$lte = endDate;
-    }
-
-    const pipeline: any[] = [];
-
-    if (Object.keys(matchStage).length > 0) {
-      pipeline.push({ $match: matchStage });
-    }
-
-    pipeline.push(
-      {
-        $group: {
-          _id: '$customerId',
-          totalDebit: {
-            $sum: {
-              $cond: [{ $eq: ['$entryType', EntryType.DEBIT] }, '$amount', 0],
-            },
-          },
-          totalCredit: {
-            $sum: {
-              $cond: [{ $eq: ['$entryType', EntryType.CREDIT] }, '$amount', 0],
-            },
-          },
-          transactionCount: { $sum: 1 },
-        },
-      },
-      {
-        $project: {
-          customerId: '$_id',
-          totalDebit: 1,
-          totalCredit: 1,
-          balance: { $subtract: ['$totalDebit', '$totalCredit'] },
-          transactionCount: 1,
-          _id: 0,
-        },
-      },
-      {
-        $lookup: {
-          from: this.customerModel.collection.name,
-          localField: 'customerId',
-          foreignField: '_id',
-          as: 'customer',
-        },
-      },
-      {
-        $unwind: {
-          path: '$customer',
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $project: {
-          customerId: 1,
-          customerName: {
-            $cond: {
-              if: { $ne: ['$customer', null] },
-              then: {
-                $concat: [
-                  { $ifNull: ['$customer.firstName', ''] },
-                  ' ',
-                  { $ifNull: ['$customer.lastName', ''] },
-                ],
-              },
-              else: 'Unknown Customer',
-            },
-          },
-          customerEmail: { $ifNull: ['$customer.email', 'N/A'] },
-          totalDebit: 1,
-          totalCredit: 1,
-          balance: 1,
-          transactionCount: 1,
-        },
-      },
-      {
-        $sort: { balance: -1 },
-      },
-    );
-
-    const report = await this.ledgerModel.aggregate(pipeline);
-    return report;
   }
 
   async getDateRangeReport(startDate: Date, endDate: Date) {

@@ -16,6 +16,9 @@ export class OrderItem {
   @Prop({ min: 0, max: 100, default: 0 })
   discountPercentage: number;
 
+  @Prop({ min: 0, default: 0 })
+  discountAmount: number;
+
   @Prop({ required: true, min: 0 })
   lineTotal: number;
 }
@@ -58,11 +61,16 @@ export type OrderSchemaDocument = Order & Document;
 
 OrderSchema.pre('validate', function () {
   let subtotal = 0;
+  let totalDiscount = 0;
 
   for (const item of this.items) {
     const gross = item.unitPrice * item.quantity;
 
     const discount = gross * ((item.discountPercentage ?? 0) / 100);
+
+    // Store the calculated discount amount
+    item.discountAmount = discount;
+    totalDiscount += discount;
 
     item.lineTotal = Math.max(gross - discount, 0);
 
@@ -71,10 +79,10 @@ OrderSchema.pre('validate', function () {
 
   this.subtotal = subtotal;
 
-  const discountTotal = this.discountTotal ?? 0;
-  const taxableAmount = Math.max(subtotal - discountTotal, 0);
+  // Set discountTotal to sum of all item discounts
+  this.discountTotal = totalDiscount;
 
   const gstTotal = this.gstTotal ?? 0;
 
-  this.grandTotal = taxableAmount + gstTotal;
+  this.grandTotal = subtotal + gstTotal;
 });

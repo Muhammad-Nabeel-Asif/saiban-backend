@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Order } from '../../schemas/order.schema';
 import { Product } from '../../schemas/product.schema';
+import { Customer } from '../../schemas/customer.schema';
 import { CreateOrderDto, OrderQueryDto } from './order.dto';
 import {
   EntryType,
@@ -23,6 +24,7 @@ export class OrderService {
     @InjectModel(StockMovement.name) private stockMovementModel: Model<StockMovement>,
     @InjectModel(LedgerEntry.name) private ledgerEntryModel: Model<LedgerEntry>,
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
+    @InjectModel(Customer.name) private customerModel: Model<Customer>,
   ) {}
 
   async create(dto: CreateOrderDto): Promise<any> {
@@ -62,6 +64,7 @@ export class OrderService {
           quantity: item.quantity,
           unitPrice: product.unitPrice,
           discountPercentage: item.discountPercentage ?? 0,
+          discountAmount: 0, // schema pre-hook will calculate
           lineTotal: 0, // schema pre-hook will calculate
         };
       });
@@ -140,22 +143,41 @@ export class OrderService {
     const { page = 1, limit = 10, search, status, customerId } = query;
     const filter: any = {};
 
-    if (search) {
-      filter.$or = [
-        { orderNumber: { $regex: search, $options: 'i' } },
-        { customerName: { $regex: search, $options: 'i' } },
-      ];
+    // Handle customerId filter
+    if (customerId) {
+      filter.customerId = customerId;
+    }
+    // If search is provided, find matching customers first
+    else if (search) {
+      const safe = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matchingCustomers = await this.customerModel
+        .find({
+          $or: [
+            { firstName: { $regex: safe, $options: 'i' } },
+            { lastName: { $regex: safe, $options: 'i' } },
+            { email: { $regex: safe, $options: 'i' } },
+          ],
+        })
+        .select('_id')
+        .lean()
+        .exec();
+
+      const customerIds = matchingCustomers.map((c) => c._id.toString());
+
+      // If no matching customers found, set filter to match nothing
+      if (customerIds.length === 0) {
+        filter.customerId = null; // Will match no orders
+      } else {
+        filter.customerId = { $in: customerIds };
+      }
     }
 
     if (status) {
       filter.status = status;
     }
 
-    if (customerId) {
-      filter.customerId = customerId;
-    }
-
     const skip = (page - 1) * limit;
+
     const [orders, total] = await Promise.all([
       this.orderModel
         .find(filter)
@@ -209,7 +231,16 @@ export class OrderService {
       order.status = OrderStatus.CANCELLED;
       await order.save({ session });
 
-      // Reverse stock
+      // Restore stock to products
+      for (const item of order.items) {
+        await this.productModel.findByIdAndUpdate(
+          item.productId,
+          { $inc: { quantityInStock: item.quantity } },
+          { session },
+        );
+      }
+
+      // Create stock movement records
       const stockReversal = order.items.map((item) => ({
         productId: item.productId,
         quantityChange: item.quantity,
@@ -249,50 +280,5 @@ export class OrderService {
       throw new NotFoundException('Order not found');
     }
     return order;
-  }
-
-  async getOrderSummary(orderId: string) {
-    const order = await this.orderModel.findById(orderId).lean();
-
-    if (!order) throw new NotFoundException('Order not found');
-
-    const subtotal = order.items.reduce((sum, i) => sum + i.lineTotal, 0);
-
-    return {
-      subtotal,
-      discountTotal: order.discountTotal ?? 0,
-      gstTotal: order.gstTotal ?? 0,
-      grandTotal: order.grandTotal ?? subtotal - (order.discountTotal ?? 0) + (order.gstTotal ?? 0),
-    };
-  }
-
-  async getOrdersReport(start: Date, end: Date) {
-    const orders = await this.orderModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
-      {
-        $project: {
-          subtotal: 1,
-          discountTotal: 1,
-          gstTotal: 1,
-          grandTotal: 1,
-          status: 1,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          subtotal: { $sum: '$subtotal' },
-          discountTotal: { $sum: '$discountTotal' },
-          gstTotal: { $sum: '$gstTotal' },
-          grandTotal: { $sum: '$grandTotal' },
-        },
-      },
-      { $project: { _id: 0 } },
-    ]);
-
-    return orders.length
-      ? orders[0]
-      : { totalOrders: 0, subtotal: 0, discountTotal: 0, gstTotal: 0, grandTotal: 0 };
   }
 }

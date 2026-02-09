@@ -9,6 +9,7 @@ import { ProductModule } from '../product/product.module';
 import { CustomerModule } from '../customer/customer.module';
 import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema';
 import { Payment, PaymentSchema } from '../../schemas/payment.schema';
+import { Customer, CustomerSchema } from '../../schemas/customer.schema';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { Payment, PaymentSchema } from '../../schemas/payment.schema';
       { name: Order.name, schema: OrderSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: Payment.name, schema: PaymentSchema },
+      { name: Customer.name, schema: CustomerSchema },
     ]),
     ProductModule,
     CustomerModule,

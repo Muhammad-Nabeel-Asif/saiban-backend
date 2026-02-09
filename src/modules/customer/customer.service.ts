@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { LedgerEntry } from '../../schemas/ledgerEntry.schema';
 import { Customer } from '../../schemas/customer.schema';
 import { Order } from '../../schemas/order.schema';
+import { Payment } from '../../schemas/payment.schema';
 import { CreateCustomerDto, CustomerQueryDto, UpdateCustomerDto } from './customer.dto';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class CustomerService {
     @InjectModel(Customer.name) private readonly customerModel: Model<Customer>,
     @InjectModel(Order.name) private readonly orderModel: Model<Order>,
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntry>,
+    @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
   ) {}
 
   private getPagination(page?: number, limit?: number) {
@@ -87,11 +89,23 @@ export class CustomerService {
   }
 
   async remove(id: string) {
-    const deleted = await this.customerModel.findByIdAndDelete(id).exec();
-    if (!deleted) {
+    // Check if customer exists
+    const customer = await this.customerModel.findById(id).exec();
+    if (!customer) {
       throw new NotFoundException('Customer not found');
     }
-    return { message: 'Customer deleted successfully' };
+
+    // Delete all related records in parallel
+    await Promise.all([
+      this.orderModel.deleteMany({ customerId: id }).exec(),
+      this.ledgerModel.deleteMany({ customerId: id }).exec(),
+      this.paymentModel.deleteMany({ customerId: id }).exec(),
+    ]);
+
+    // Finally, delete the customer
+    await this.customerModel.findByIdAndDelete(id).exec();
+
+    return { message: 'Customer and all related records deleted successfully' };
   }
 
   /* -------------------- history -------------------- */
