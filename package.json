@@ -9,7 +9,15 @@
     "start:dev": "nest start swc -w",
     "build": "nest build",
     "format:check": "prettier --check .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "deploy:prod": "npm run build && pm2 restart saiban-production",
+    "deploy:staging": "npm run build && pm2 restart saiban-staging",
+    "deploy:both": "npm run build && pm2 restart all",
+    "logs:prod": "pm2 logs saiban-production",
+    "logs:staging": "pm2 logs saiban-staging",
+    "stop:prod": "pm2 stop saiban-production",
+    "stop:staging": "pm2 stop saiban-staging",
+    "status": "pm2 status"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
