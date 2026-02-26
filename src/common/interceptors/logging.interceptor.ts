@@ -9,13 +9,10 @@ export class LoggingInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
     const { method, url, body } = request;
-    const userAgent = request.get('user-agent') || '';
-    const ip = request.ip;
-
     const now = Date.now();
 
     // Log incoming request
-    this.logger.log(`→ ${method} ${url} - ${ip} - ${userAgent}`);
+    this.logger.log(`→ ${method} ${url}`);
 
     // Log request body for POST/PATCH/PUT (excluding sensitive fields)
     if (['POST', 'PATCH', 'PUT'].includes(method)) {

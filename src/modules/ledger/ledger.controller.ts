@@ -7,7 +7,6 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { RevenueQueryDto } from '../payment/payment.dto';
 import { LedgerService } from './ledger.service';
 import { AuthGuard } from '../../guards/jwt-auth.guard';
 import { GetDateRangeReportDto } from './ledger.dto';
@@ -62,10 +61,5 @@ export class LedgerController {
   @Get('summary')
   async getLedgerSummary() {
     return this.ledgerService.getLedgerSummary();
-  }
-
-  @Get('revenue')
-  async getRevenue(@Query() query: RevenueQueryDto) {
-    return this.ledgerService.getRevenue(query);
   }
 }

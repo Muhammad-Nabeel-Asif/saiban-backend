@@ -6,6 +6,7 @@ import { Customer } from '../../schemas/customer.schema';
 import { Order } from '../../schemas/order.schema';
 import { Payment } from '../../schemas/payment.schema';
 import { CreateCustomerDto, CustomerQueryDto, UpdateCustomerDto } from './customer.dto';
+import { LedgerService } from '../ledger/ledger.service';
 
 @Injectable()
 export class CustomerService {
@@ -14,6 +15,7 @@ export class CustomerService {
     @InjectModel(Order.name) private readonly orderModel: Model<Order>,
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntry>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   private getPagination(page?: number, limit?: number) {
@@ -68,11 +70,19 @@ export class CustomerService {
   }
 
   async findOne(id: string) {
-    const customer = await this.customerModel.findById(id).lean().exec();
+    const [customer, balance] = await Promise.all([
+      this.customerModel.findById(id).lean().exec(),
+      this.ledgerService.getCustomerBalance(id),
+    ]);
+
     if (!customer) {
       throw new NotFoundException('Customer not found');
     }
-    return customer;
+
+    return {
+      ...customer,
+      balance,
+    };
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
@@ -145,7 +155,7 @@ export class CustomerService {
         .find({ customerId })
         .skip(skip)
         .limit(limitNum)
-        .sort({ transactionDate: -1 })
+        .sort({ createdAt: -1 })
         .lean()
         .exec(),
       this.ledgerModel.countDocuments({ customerId }).exec(),

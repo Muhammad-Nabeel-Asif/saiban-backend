@@ -9,6 +9,7 @@ import {
   EntryType,
   OrderStatus,
   PaymentMethod,
+  SOURCE_TYPE_MODEL_MAP,
   SourceType,
   StockMovementReason,
 } from '../../schemas/schema.types';
@@ -96,6 +97,7 @@ export class OrderService {
         entryType: EntryType.DEBIT,
         amount: order.grandTotal,
         sourceType: SourceType.ORDER,
+        sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ORDER],
         sourceId: order._id,
       });
 
@@ -121,6 +123,7 @@ export class OrderService {
           entryType: EntryType.CREDIT,
           amount: order.grandTotal,
           sourceType: SourceType.PAYMENT,
+          sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
           sourceId: payment._id,
         });
 
@@ -207,6 +210,8 @@ export class OrderService {
       throw new BadRequestException('Order already completed');
     if (order.status === OrderStatus.CANCELLED)
       throw new BadRequestException('Cannot confirm cancelled order');
+    if (order.status === OrderStatus.RETURNED)
+      throw new BadRequestException('Cannot confirm a returned order');
 
     // Stock was already deducted at order creation, just update status
     order.status = OrderStatus.COMPLETED;
@@ -227,6 +232,10 @@ export class OrderService {
       if (!order) throw new NotFoundException('Order not found');
       if (order.status === OrderStatus.CANCELLED)
         throw new BadRequestException('Order already cancelled');
+      if (order.status === OrderStatus.COMPLETED)
+        throw new BadRequestException(
+          'Cannot cancel a completed order. Use the return endpoint instead.',
+        );
 
       order.status = OrderStatus.CANCELLED;
       await order.save({ session });
@@ -249,20 +258,105 @@ export class OrderService {
       }));
       await this.stockMovementModel.insertMany(stockReversal, { session });
 
-      // Reverse ledger
+      // Reverse ledger (order DEBIT -> CREDIT reversal)
       const ledgerReversal = new this.ledgerEntryModel({
         customerId: order.customerId,
         entryType: EntryType.CREDIT,
         amount: order.grandTotal,
         sourceType: SourceType.ORDER,
+        sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ORDER],
         sourceId: order._id,
       });
       await ledgerReversal.save({ session });
+
+      // Reverse auto-payment if one was created at order time
+      const autoPayment = await this.paymentModel.findOne({ orderId: order._id }).session(session);
+      if (autoPayment) {
+        const paymentReversal = new this.ledgerEntryModel({
+          customerId: order.customerId,
+          entryType: EntryType.DEBIT,
+          amount: autoPayment.amount,
+          sourceType: SourceType.PAYMENT,
+          sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
+          sourceId: autoPayment._id,
+        });
+        await paymentReversal.save({ session });
+      }
 
       await session.commitTransaction();
       await session.endSession();
 
       return order;
+    } catch (err) {
+      await session.abortTransaction();
+      await session.endSession();
+      throw err;
+    }
+  }
+
+  async returnOrder(orderId: string) {
+    const session = await this.orderModel.db.startSession();
+    session.startTransaction();
+
+    try {
+      const order = await this.orderModel.findById(orderId).session(session);
+      if (!order) throw new NotFoundException('Order not found');
+      if (order.status !== OrderStatus.COMPLETED)
+        throw new BadRequestException('Only completed orders can be returned');
+
+      order.status = OrderStatus.RETURNED;
+      await order.save({ session });
+
+      // Restore stock
+      for (const item of order.items) {
+        await this.productModel.findByIdAndUpdate(
+          item.productId,
+          { $inc: { quantityInStock: item.quantity } },
+          { session },
+        );
+      }
+
+      // Create stock movement records
+      const stockReversal = order.items.map((item) => ({
+        productId: item.productId,
+        quantityChange: item.quantity,
+        reason: StockMovementReason.RETURN,
+        referenceId: order._id,
+      }));
+      await this.stockMovementModel.insertMany(stockReversal, { session });
+
+      // Reverse ledger (order DEBIT -> CREDIT reversal)
+      const ledgerReversal = new this.ledgerEntryModel({
+        customerId: order.customerId,
+        entryType: EntryType.CREDIT,
+        amount: order.grandTotal,
+        sourceType: SourceType.RETURN,
+        sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.RETURN],
+        sourceId: order._id,
+      });
+      await ledgerReversal.save({ session });
+
+      // Reverse auto-payment if one was created at order time
+      const autoPayment = await this.paymentModel.findOne({ orderId: order._id }).session(session);
+      if (autoPayment) {
+        const paymentReversal = new this.ledgerEntryModel({
+          customerId: order.customerId,
+          entryType: EntryType.DEBIT,
+          amount: autoPayment.amount,
+          sourceType: SourceType.PAYMENT,
+          sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
+          sourceId: autoPayment._id,
+        });
+        await paymentReversal.save({ session });
+      }
+
+      await session.commitTransaction();
+      await session.endSession();
+
+      return {
+        order,
+        message: 'Order returned successfully',
+      };
     } catch (err) {
       await session.abortTransaction();
       await session.endSession();

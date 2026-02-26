@@ -24,6 +24,7 @@ export class DashboardService {
       lowStockProducts,
       pendingOrders,
       ledgerSummary,
+      revenueResult,
     ] = await Promise.all([
       this.productModel.countDocuments(),
       this.customerModel.countDocuments(),
@@ -39,18 +40,20 @@ export class DashboardService {
         .limit(10)
         .sort({ createdAt: -1 }),
       this.ledgerService.getLedgerSummary(),
+      this.orderModel.aggregate([
+        { $match: { status: OrderStatus.COMPLETED } },
+        { $group: { _id: null, totalRevenue: { $sum: '$grandTotal' } } },
+      ]),
     ]);
+
+    const totalRevenue = revenueResult.length ? revenueResult[0].totalRevenue : 0;
 
     return {
       metrics: {
         totalProducts,
         totalCustomers,
         totalOrders,
-        ledger: {
-          totalReceivable: ledgerSummary.totalReceivable,
-          totalDebit: ledgerSummary.totalDebit,
-          totalCredit: ledgerSummary.totalCredit,
-        },
+        totalRevenue,
       },
       alerts: {
         lowStockProducts: lowStockProducts.map((p) => ({

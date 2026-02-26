@@ -32,4 +32,9 @@ export class OrderController {
   cancel(@Param('id') id: string) {
     return this.orderService.cancelOrder(id);
   }
+
+  @Patch(':id/return')
+  returnOrder(@Param('id') id: string) {
+    return this.orderService.returnOrder(id);
+  }
 }

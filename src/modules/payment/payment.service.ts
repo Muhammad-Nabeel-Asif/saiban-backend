@@ -1,7 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { EntryType, OrderStatus, PaymentMethod, SourceType } from '../../schemas/schema.types';
+import { Model, Types } from 'mongoose';
+import {
+  EntryType,
+  OrderStatus,
+  SOURCE_TYPE_MODEL_MAP,
+  SourceType,
+} from '../../schemas/schema.types';
 import { Payment, PaymentDocument } from '../../schemas/payment.schema';
 import { LedgerEntry, LedgerEntryDocument } from '../../schemas/ledgerEntry.schema';
 import { Order, OrderSchemaDocument } from '../../schemas/order.schema';
@@ -24,6 +29,23 @@ export class PaymentService {
       if (orderId) {
         const order = await this.orderModel.findById(orderId).session(session);
         if (!order) throw new NotFoundException('Order not found');
+        if (order.status === OrderStatus.CANCELLED)
+          throw new BadRequestException('Cannot record payment for a cancelled order');
+
+        const orderIdMatch: any[] = [{ orderId }];
+        if (Types.ObjectId.isValid(orderId)) {
+          orderIdMatch.push({ orderId: new Types.ObjectId(orderId) });
+        }
+        const paidSoFar = await this.paymentModel.aggregate([
+          { $match: { $or: orderIdMatch } },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]);
+        const totalPaid = paidSoFar.length ? paidSoFar[0].total : 0;
+        if (totalPaid + amount > order.grandTotal) {
+          throw new BadRequestException(
+            `Payment exceeds order total. Order total: ${order.grandTotal}, Already paid: ${totalPaid}, Attempted: ${amount}`,
+          );
+        }
       }
 
       // Create payment record
@@ -43,6 +65,7 @@ export class PaymentService {
         entryType: EntryType.CREDIT,
         amount,
         sourceType: SourceType.PAYMENT,
+        sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
         sourceId: payment._id,
       });
       await ledgerEntry.save({ session });

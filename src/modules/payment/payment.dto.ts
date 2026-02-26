@@ -26,11 +26,3 @@ export class CreatePaymentDto {
   @IsString()
   note?: string;
 }
-
-export class RevenueQueryDto {
-  @IsNotEmpty()
-  start: Date;
-
-  @IsNotEmpty()
-  end: Date;
-}

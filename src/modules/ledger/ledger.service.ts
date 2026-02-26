@@ -2,20 +2,28 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LedgerEntry, LedgerEntryDocument } from '../../schemas/ledgerEntry.schema';
-import { EntryType, SourceType } from '../../schemas/schema.types';
-import { RevenueQueryDto } from '../payment/payment.dto';
-import { Customer } from '../../schemas/customer.schema';
+import { EntryType } from '../../schemas/schema.types';
 
 @Injectable()
 export class LedgerService {
   constructor(
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntryDocument>,
-    @InjectModel(Customer.name) private readonly customerModel: Model<Customer>,
   ) {}
 
-  async getCustomerBalance(customerId: string): Promise<{ balance: number }> {
+  async getCustomerBalance(customerId: string): Promise<{
+    netBalance: number;
+    direction: 'customer_owes' | 'we_owe_customer' | 'settled';
+    absoluteAmount: number;
+  }> {
+    const matchConditions: any[] = [{ customerId }];
+    if (Types.ObjectId.isValid(customerId)) {
+      matchConditions.push({ customerId: new Types.ObjectId(customerId) });
+    }
+
     const result = await this.ledgerModel.aggregate([
-      { $match: { customerId: new Types.ObjectId(customerId) } },
+      {
+        $match: { $or: matchConditions },
+      },
       {
         $group: {
           _id: '$customerId',
@@ -39,22 +47,24 @@ export class LedgerService {
       },
     ]);
 
-    return result.length ? { balance: result[0].balance } : { balance: 0 };
-  }
+    const netBalance = result.length ? result[0].balance : 0;
 
-  async getRevenue({ start, end }: RevenueQueryDto): Promise<{ revenue: number }> {
-    const result = await this.ledgerModel.aggregate([
-      {
-        $match: {
-          entryType: EntryType.DEBIT,
-          sourceType: SourceType.ORDER,
-          createdAt: { $gte: start, $lte: end },
-        },
-      },
-      { $group: { _id: null, totalRevenue: { $sum: '$amount' } } },
-    ]);
+    let direction: 'customer_owes' | 'we_owe_customer' | 'settled' = 'settled';
+    let absoluteAmount = 0;
 
-    return result.length ? { revenue: result[0].totalRevenue } : { revenue: 0 };
+    if (netBalance > 0) {
+      direction = 'customer_owes';
+      absoluteAmount = netBalance;
+    } else if (netBalance < 0) {
+      direction = 'we_owe_customer';
+      absoluteAmount = -netBalance;
+    }
+
+    return {
+      netBalance,
+      direction,
+      absoluteAmount,
+    };
   }
 
   async getCustomerLedgerEntries(
@@ -70,56 +80,60 @@ export class LedgerService {
     if (startDate || endDate) {
       filter.createdAt = {};
       if (startDate) {
-        // Set to start of day in UTC
         const start = new Date(startDate);
         start.setUTCHours(0, 0, 0, 0);
         filter.createdAt.$gte = start;
       }
       if (endDate) {
-        // Set to end of day in UTC to include entire day
         const end = new Date(endDate);
         end.setUTCHours(23, 59, 59, 999);
         filter.createdAt.$lte = end;
       }
     }
 
-    const [entries, total] = await Promise.all([
+    const [pageEntries, total, priorBalanceResult] = await Promise.all([
       this.ledgerModel
         .find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ createdAt: 1 })
         .skip(skip)
         .limit(limit)
         .populate('sourceId')
         .lean()
         .exec(),
       this.ledgerModel.countDocuments(filter).exec(),
+      skip > 0
+        ? this.ledgerModel.aggregate([
+            { $match: filter },
+            { $sort: { createdAt: 1 } },
+            { $limit: skip },
+            {
+              $group: {
+                _id: null,
+                balance: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ['$entryType', EntryType.DEBIT] },
+                      '$amount',
+                      { $multiply: ['$amount', -1] },
+                    ],
+                  },
+                },
+              },
+            },
+          ])
+        : Promise.resolve([]),
     ]);
 
-    // Calculate running balance for each entry
-    const entriesWithBalance = [];
-    let runningBalance = 0;
+    let runningBalance = priorBalanceResult.length ? priorBalanceResult[0].balance : 0;
 
-    // Get all entries up to the last one in current page to calculate running balance
-    const allEntriesUpToPage = await this.ledgerModel
-      .find(filter)
-      .sort({ createdAt: 1 })
-      .skip(skip)
-      .limit(limit)
-      .lean()
-      .exec();
-
-    for (const entry of allEntriesUpToPage) {
+    const entriesWithBalance = pageEntries.map((entry) => {
       if (entry.entryType === EntryType.DEBIT) {
         runningBalance += entry.amount;
       } else {
         runningBalance -= entry.amount;
       }
-      // @ts-ignore
-      entriesWithBalance.push({
-        ...entry,
-        balance: runningBalance,
-      });
-    }
+      return { ...entry, balance: runningBalance };
+    });
 
     return {
       data: entriesWithBalance.reverse(),

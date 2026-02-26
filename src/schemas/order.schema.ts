@@ -45,9 +45,6 @@ export class Order {
   @Prop({ min: 0, default: 0 })
   discountTotal: number;
 
-  @Prop({ min: 0, default: 0 })
-  gstTotal: number;
-
   @Prop({ required: true, min: 0 })
   grandTotal: number;
 
@@ -79,10 +76,7 @@ OrderSchema.pre('validate', function () {
 
   this.subtotal = subtotal;
 
-  // Set discountTotal to sum of all item discounts
   this.discountTotal = totalDiscount;
 
-  const gstTotal = this.gstTotal ?? 0;
-
-  this.grandTotal = subtotal + gstTotal;
+  this.grandTotal = subtotal;
 });

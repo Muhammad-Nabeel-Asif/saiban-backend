@@ -24,7 +24,10 @@ export class LedgerEntry {
   })
   sourceType: SourceType;
 
-  @Prop({ type: Types.ObjectId, required: true })
+  @Prop({ type: String, required: true })
+  sourceModel: string;
+
+  @Prop({ type: Types.ObjectId, required: true, refPath: 'sourceModel' })
   sourceId: Types.ObjectId;
 }
 

@@ -10,6 +10,13 @@ export enum SourceType {
   RETURN = 'return',
 }
 
+export const SOURCE_TYPE_MODEL_MAP: Record<string, string> = {
+  [SourceType.ORDER]: 'Order',
+  [SourceType.PAYMENT]: 'Payment',
+  [SourceType.ADJUSTMENT]: 'Order',
+  [SourceType.RETURN]: 'Order',
+};
+
 export enum StockMovementReason {
   ORDER = 'order',
   ADJUSTMENT = 'adjustment',
@@ -20,6 +27,7 @@ export enum OrderStatus {
   PENDING = 'pending',
   COMPLETED = 'completed',
   CANCELLED = 'cancelled',
+  RETURNED = 'returned',
 }
 
 export enum PaymentMethod {
