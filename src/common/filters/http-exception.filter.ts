@@ -18,9 +18,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const message =
       exception instanceof HttpException
@@ -35,20 +33,27 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message: typeof message === 'string' ? message : (message as any).message || message,
     };
 
-    // Log error details
-    this.logger.error(
-      `${request.method} ${request.url} - Status: ${status}`,
-      exception instanceof Error ? exception.stack : 'Unknown error',
-    );
+    const isClientError = status >= 400 && status < 500;
 
-    // Log error details to console for PM2
-    console.error('=== ERROR ===');
-    console.error('Time:', new Date().toISOString());
-    console.error('Method:', request.method);
-    console.error('URL:', request.url);
-    console.error('Status:', status);
-    console.error('Error:', exception);
-    console.error('=============');
+    if (isClientError) {
+      // 4xx: expected client errors (validation, not found, etc.) – log once at WARN, no stack
+      this.logger.warn(
+        `${request.method} ${request.url} - ${status} - ${JSON.stringify(errorResponse.message)}`,
+      );
+    } else {
+      // 5xx / unknown: real server errors – full log and stack for debugging
+      this.logger.error(
+        `${request.method} ${request.url} - Status: ${status}`,
+        exception instanceof Error ? exception.stack : 'Unknown error',
+      );
+      console.error('=== ERROR ===');
+      console.error('Time:', new Date().toISOString());
+      console.error('Method:', request.method);
+      console.error('URL:', request.url);
+      console.error('Status:', status);
+      console.error('Error:', exception);
+      console.error('=============');
+    }
 
     response.status(status).json(errorResponse);
   }
