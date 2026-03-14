@@ -12,7 +12,7 @@ export class Customer extends Document {
   @Prop()
   phoneNumber: string;
 
-  @Prop({ unique: true })
+  @Prop()
   email: string;
 
   @Prop()
