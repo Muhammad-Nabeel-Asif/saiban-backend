@@ -7,24 +7,28 @@ export class CreateCustomerDto {
   @IsString()
   firstName: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  lastName: string;
+  lastName?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  phoneNumber: string;
+  phoneNumber?: string;
 
+  @IsOptional()
   @IsEmail()
   @Transform(({ value }) => value?.toLowerCase())
   email?: string;
 
+  @IsOptional()
   @IsString()
   streetAddress?: string;
 
+  @IsOptional()
   @IsString()
   city?: string;
 
+  @IsOptional()
   @IsString()
   state?: string;
 }
