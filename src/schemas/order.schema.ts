@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { OrderStatus, PaymentMethod } from './schema.types';
+import { OrderStatus } from './schema.types';
 
 @Schema({ _id: false })
 export class OrderItem {
@@ -32,9 +32,6 @@ export class Order {
 
   @Prop({ type: String, required: true, enum: OrderStatus })
   status: OrderStatus;
-
-  @Prop({ type: String, required: true, enum: PaymentMethod })
-  paymentMethod: PaymentMethod;
 
   @Prop({ type: [OrderItemSchema], required: true })
   items: OrderItem[];

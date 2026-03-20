@@ -8,7 +8,6 @@ import { CreateOrderDto, OrderQueryDto } from './order.dto';
 import {
   EntryType,
   OrderStatus,
-  PaymentMethod,
   SOURCE_TYPE_MODEL_MAP,
   SourceType,
   StockMovementReason,
@@ -74,7 +73,6 @@ export class OrderService {
       const order = new this.orderModel({
         customerId: dto.customerId,
         status: OrderStatus.PENDING,
-        paymentMethod: dto.paymentMethod,
         items,
         note: dto.note,
       });
@@ -103,36 +101,8 @@ export class OrderService {
 
       await ledgerEntry.save({ session });
 
-      // 7. Handle payment based on payment method
-      if (dto.paymentMethod !== PaymentMethod.ON_ACCOUNT) {
-        // For non-account payments, record payment immediately
-        const payment = new this.paymentModel({
-          customerId: dto.customerId,
-          orderId: order._id,
-          amount: order.grandTotal,
-          paymentMethod: dto.paymentMethod,
-          reference: dto.paymentReference,
-          note: 'Payment at order creation',
-        });
-
-        await payment.save({ session });
-
-        // Create corresponding ledger entry (CREDIT)
-        const paymentLedgerEntry = new this.ledgerEntryModel({
-          customerId: dto.customerId,
-          entryType: EntryType.CREDIT,
-          amount: order.grandTotal,
-          sourceType: SourceType.PAYMENT,
-          sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
-          sourceId: payment._id,
-        });
-
-        await paymentLedgerEntry.save({ session });
-      }
-
       await session.commitTransaction();
       await session.endSession();
-
       return order;
     } catch (err) {
       console.error({ err });
@@ -213,7 +183,6 @@ export class OrderService {
     if (order.status === OrderStatus.RETURNED)
       throw new BadRequestException('Cannot confirm a returned order');
 
-    // Stock was already deducted at order creation, just update status
     order.status = OrderStatus.COMPLETED;
     await order.save();
 

@@ -11,7 +11,6 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PaymentMethod } from '../../schemas/schema.types';
 
 export class CreateOrderItemDto {
   @IsMongoId()
@@ -35,9 +34,6 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
-
-  @IsEnum(PaymentMethod)
-  paymentMethod: PaymentMethod;
 
   @IsOptional()
   @IsString()
