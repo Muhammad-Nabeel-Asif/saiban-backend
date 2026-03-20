@@ -20,9 +20,5 @@ export class CreatePaymentDto {
 
   @IsOptional()
   @IsString()
-  reference?: string;
-
-  @IsOptional()
-  @IsString()
   note?: string;
 }

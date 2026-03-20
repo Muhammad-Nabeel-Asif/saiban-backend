@@ -20,7 +20,7 @@ export class PaymentService {
     @InjectModel(Order.name) private readonly orderModel: Model<OrderSchemaDocument>,
   ) {}
   async recordPayment(createPaymentDto: CreatePaymentDto) {
-    const { customerId, orderId, amount, paymentMethod, reference, note } = createPaymentDto;
+    const { customerId, orderId, amount, paymentMethod, note } = createPaymentDto;
     const session = await this.paymentModel.db.startSession();
     session.startTransaction();
 
@@ -54,7 +54,6 @@ export class PaymentService {
         orderId: orderId || null,
         amount,
         paymentMethod,
-        reference,
         note,
       });
       await payment.save({ session });

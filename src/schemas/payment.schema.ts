@@ -17,9 +17,6 @@ export class Payment extends Document {
   paymentMethod: PaymentMethod;
 
   @Prop()
-  reference: string;
-
-  @Prop()
   note: string;
 
   @Prop()
