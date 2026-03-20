@@ -63,6 +63,18 @@ export class CreateProductDto {
   @IsNumber()
   @Min(0)
   quantityInStock: number;
+
+  @IsOptional()
+  @IsString()
+  batchNo?: string;
+
+  @IsOptional()
+  @IsString()
+  expiry?: string;
+
+  @IsOptional()
+  @IsString()
+  mfg?: string;
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}

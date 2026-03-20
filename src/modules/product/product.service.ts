@@ -5,6 +5,8 @@ import { Product } from '../../schemas/product.schema';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './product.dto';
 import { StockMovement } from '../../schemas/stockMovement.schema';
 
+const PRODUCT_NEWLY_INCLUDED_FIELDS = ['batchNo', 'expiry', 'mfg'] as const;
+
 @Injectable()
 export class ProductService {
   constructor(
@@ -13,6 +15,17 @@ export class ProductService {
     @InjectModel(StockMovement.name)
     private readonly stockMovementModel: Model<StockMovement>,
   ) {}
+
+  /** Ensures API responses always include batch/expiry/mfg keys (empty string when unset in DB). */
+  private withProductNewFields(doc: object): Record<string, unknown> {
+    const out = { ...doc } as Record<string, unknown>;
+    for (const key of PRODUCT_NEWLY_INCLUDED_FIELDS) {
+      if (out[key] === undefined) {
+        out[key] = '';
+      }
+    }
+    return out;
+  }
 
   private getPagination(page?: number, limit?: number) {
     const pageNum = Math.max(1, Number(page) || 1);
@@ -26,8 +39,9 @@ export class ProductService {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  create(dto: CreateProductDto) {
-    return this.productModel.create(dto);
+  async create(dto: CreateProductDto) {
+    const created = await this.productModel.create(dto);
+    return this.withProductNewFields(created.toObject());
   }
 
   async findAll(query: ProductQueryDto) {
@@ -81,7 +95,7 @@ export class ProductService {
     ]);
 
     return {
-      data,
+      data: data.map((p) => this.withProductNewFields(p)),
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -96,7 +110,7 @@ export class ProductService {
     if (!product) {
       throw new NotFoundException('Product not found');
     }
-    return product;
+    return this.withProductNewFields(product);
   }
 
   async update(id: string, dto: UpdateProductDto) {
@@ -106,7 +120,7 @@ export class ProductService {
       throw new NotFoundException('Product not found');
     }
 
-    return product;
+    return this.withProductNewFields(product);
   }
 
   async remove(id: string) {

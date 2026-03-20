@@ -33,6 +33,15 @@ export class Product extends Document {
 
   @Prop({ default: 0 })
   quantityInStock: number;
+
+  @Prop()
+  batchNo?: string;
+
+  @Prop()
+  expiry?: string;
+
+  @Prop()
+  mfg?: string;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
