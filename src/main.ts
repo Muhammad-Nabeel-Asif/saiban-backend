@@ -54,7 +54,7 @@ async function bootstrap() {
   logger.log(`CORS Origins: ${origins.join(', ') || 'Not configured'}`);
   logger.log('='.repeat(50));
 
-  await app.listen(port);
+  await app.listen(port || 3000);
 
   logger.log(`🚀 Application is running on: http://localhost:${port}/api`);
   logger.log(`📝 Logging is enabled and working properly`);
