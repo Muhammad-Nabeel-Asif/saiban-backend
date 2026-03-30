@@ -6,6 +6,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { MongoExceptionFilter } from './exceptions/mongo.exception';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { MonetaryPrecisionInterceptor } from './common/interceptors/monetary-precision.interceptor';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -40,7 +41,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter(), new MongoExceptionFilter());
 
   // Add logging interceptor
-  app.useGlobalInterceptors(new LoggingInterceptor());
+  app.useGlobalInterceptors(new LoggingInterceptor(), new MonetaryPrecisionInterceptor());
 
   app.setGlobalPrefix('api');
 
