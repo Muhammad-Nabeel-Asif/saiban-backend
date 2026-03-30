@@ -10,7 +10,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { CreateCustomerDto, CustomerQueryDto, UpdateCustomerDto } from './customer.dto';
+import {
+  BalanceAdjustmentDto,
+  CreateCustomerDto,
+  CustomerQueryDto,
+  UpdateCustomerDto,
+} from './customer.dto';
 import { CustomerService } from './customer.service';
 import { AuthGuard } from '../../guards/jwt-auth.guard';
 import { Types } from 'mongoose';
@@ -50,6 +55,12 @@ export class CustomerController {
   remove(@Param('id') id: string) {
     this.validateObjectId(id);
     return this.customerService.remove(id);
+  }
+
+  @Post(':id/balance-adjustments')
+  adjustBalance(@Param('id') id: string, @Body() dto: BalanceAdjustmentDto) {
+    this.validateObjectId(id);
+    return this.customerService.adjustBalance(id, dto);
   }
 
   @Get(':id/orders')

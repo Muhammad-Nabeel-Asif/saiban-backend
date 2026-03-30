@@ -1,12 +1,27 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { LedgerEntry } from '../../schemas/ledgerEntry.schema';
 import { Customer } from '../../schemas/customer.schema';
 import { Order } from '../../schemas/order.schema';
 import { Payment } from '../../schemas/payment.schema';
-import { CreateCustomerDto, CustomerQueryDto, UpdateCustomerDto } from './customer.dto';
+import {
+  BalanceAdjustmentDto,
+  CreateCustomerDto,
+  CustomerQueryDto,
+  UpdateCustomerDto,
+} from './customer.dto';
 import { LedgerService } from '../ledger/ledger.service';
+import {
+  BalanceDirection,
+  EntryType,
+  SOURCE_TYPE_MODEL_MAP,
+  SourceType,
+} from '../../schemas/schema.types';
+import {
+  CustomerBalanceAdjustment,
+  CustomerBalanceAdjustmentDocument,
+} from '../../schemas/customerBalanceAdjustment.schema';
 
 @Injectable()
 export class CustomerService {
@@ -15,6 +30,8 @@ export class CustomerService {
     @InjectModel(Order.name) private readonly orderModel: Model<Order>,
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntry>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+    @InjectModel(CustomerBalanceAdjustment.name)
+    private readonly customerBalanceAdjustmentModel: Model<CustomerBalanceAdjustmentDocument>,
     private readonly ledgerService: LedgerService,
   ) {}
 
@@ -39,8 +56,72 @@ export class CustomerService {
     };
   }
 
+  private buildCustomerIdFilter(customerId: string) {
+    const matchConditions: any[] = [{ customerId }];
+    if (Types.ObjectId.isValid(customerId)) {
+      matchConditions.push({ customerId: new Types.ObjectId(customerId) });
+    }
+
+    return { $or: matchConditions };
+  }
+
+  private getEntryTypeForAdjustment(direction: BalanceDirection): EntryType {
+    if (direction === BalanceDirection.CUSTOMER_OWES) {
+      return EntryType.DEBIT;
+    }
+
+    return EntryType.CREDIT;
+  }
+
+  private async createBalanceAdjustment(
+    customerId: string | Types.ObjectId,
+    dto: BalanceAdjustmentDto,
+    session: ClientSession,
+  ) {
+    const entryType = this.getEntryTypeForAdjustment(dto.direction);
+    const adjustment = new this.customerBalanceAdjustmentModel({
+      customerId,
+      amount: dto.amount,
+      direction: dto.direction,
+      note: dto.note,
+    });
+    await adjustment.save({ session });
+
+    const ledgerEntry = new this.ledgerModel({
+      customerId,
+      entryType,
+      amount: dto.amount,
+      sourceType: SourceType.ADJUSTMENT,
+      sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ADJUSTMENT],
+      sourceId: adjustment._id,
+    });
+    await ledgerEntry.save({ session });
+
+    return adjustment.toObject();
+  }
+
   async create(dto: CreateCustomerDto) {
-    return this.customerModel.create(dto);
+    const { balanceAdjustment, ...customerData } = dto;
+    const session = await this.customerModel.db.startSession();
+    session.startTransaction();
+
+    try {
+      const customer = new this.customerModel(customerData);
+      await customer.save({ session });
+
+      if (balanceAdjustment) {
+        await this.createBalanceAdjustment(customer._id as Types.ObjectId, balanceAdjustment, session);
+      }
+
+      await session.commitTransaction();
+      session.endSession();
+
+      return customer.toObject();
+    } catch (err) {
+      await session.abortTransaction();
+      session.endSession();
+      throw err;
+    }
   }
 
   async findAll(query: CustomerQueryDto) {
@@ -110,6 +191,7 @@ export class CustomerService {
       this.orderModel.deleteMany({ customerId: id }).exec(),
       this.ledgerModel.deleteMany({ customerId: id }).exec(),
       this.paymentModel.deleteMany({ customerId: id }).exec(),
+      this.customerBalanceAdjustmentModel.deleteMany({ customerId: id }).exec(),
     ]);
 
     // Finally, delete the customer
@@ -118,14 +200,45 @@ export class CustomerService {
     return { message: 'Customer and all related records deleted successfully' };
   }
 
+  async adjustBalance(customerId: string, dto: BalanceAdjustmentDto) {
+    const session = await this.customerModel.db.startSession();
+    session.startTransaction();
+
+    try {
+      const customer = await this.customerModel.findById(customerId).session(session).lean().exec();
+
+      if (!customer) {
+        throw new NotFoundException('Customer not found');
+      }
+
+      const adjustment = await this.createBalanceAdjustment(customerId, dto, session);
+
+      await session.commitTransaction();
+      session.endSession();
+
+      const balance = await this.ledgerService.getCustomerBalance(customerId);
+
+      return {
+        message: 'Balance adjusted successfully',
+        adjustment,
+        balance,
+      };
+    } catch (err) {
+      await session.abortTransaction();
+      session.endSession();
+      throw err;
+    }
+  }
+
   /* -------------------- history -------------------- */
 
   async getOrderHistory(customerId: string, page?: number, limit?: number) {
     const { pageNum, limitNum, skip } = this.getPagination(page, limit);
+    const customerFilter = this.buildCustomerIdFilter(customerId);
 
     const [data, total] = await Promise.all([
       this.orderModel
-        .find({ customerId })
+        .find(customerFilter)
         .populate('customerId', 'firstName lastName email')
         .populate('items.productId', '')
         .skip(skip)
@@ -133,7 +246,7 @@ export class CustomerService {
         .sort({ createdAt: -1 })
         .lean()
         .exec(),
-      this.orderModel.countDocuments({ customerId }).exec(),
+      this.orderModel.countDocuments(customerFilter).exec(),
     ]);
 
     return {
@@ -149,16 +262,17 @@ export class CustomerService {
 
   async getTransactionHistory(customerId: string, page?: number, limit?: number) {
     const { pageNum, limitNum, skip } = this.getPagination(page, limit);
+    const customerFilter = this.buildCustomerIdFilter(customerId);
 
     const [data, total] = await Promise.all([
       this.ledgerModel
-        .find({ customerId })
+        .find(customerFilter)
         .skip(skip)
         .limit(limitNum)
         .sort({ createdAt: -1 })
         .lean()
         .exec(),
-      this.ledgerModel.countDocuments({ customerId }).exec(),
+      this.ledgerModel.countDocuments(customerFilter).exec(),
     ]);
 
     return {

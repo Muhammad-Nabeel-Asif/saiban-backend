@@ -3,6 +3,11 @@ export enum EntryType {
   CREDIT = 'credit', // Payments
 }
 
+export enum BalanceDirection {
+  CUSTOMER_OWES = 'customer_owes',
+  WE_OWE_CUSTOMER = 'we_owe_customer',
+}
+
 export enum SourceType {
   ORDER = 'order',
   PAYMENT = 'payment',
@@ -13,7 +18,7 @@ export enum SourceType {
 export const SOURCE_TYPE_MODEL_MAP: Record<string, string> = {
   [SourceType.ORDER]: 'Order',
   [SourceType.PAYMENT]: 'Payment',
-  [SourceType.ADJUSTMENT]: 'Order',
+  [SourceType.ADJUSTMENT]: 'CustomerBalanceAdjustment',
   [SourceType.RETURN]: 'Order',
 };
 

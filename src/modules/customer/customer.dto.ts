@@ -1,8 +1,18 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { PartialType } from '@nestjs/mapped-types';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { BalanceDirection } from '../../schemas/schema.types';
 
-export class CreateCustomerDto {
+class CustomerProfileDto {
   @IsNotEmpty()
   @IsString()
   firstName: string;
@@ -33,7 +43,28 @@ export class CreateCustomerDto {
   state?: string;
 }
 
-export class UpdateCustomerDto extends PartialType(CreateCustomerDto) {}
+export class BalanceAdjustmentDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amount: number;
+
+  @IsEnum(BalanceDirection)
+  direction: BalanceDirection;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class CreateCustomerDto extends CustomerProfileDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BalanceAdjustmentDto)
+  balanceAdjustment?: BalanceAdjustmentDto;
+}
+
+export class UpdateCustomerDto extends PartialType(CustomerProfileDto) {}
 
 export class CustomerQueryDto {
   @IsOptional()

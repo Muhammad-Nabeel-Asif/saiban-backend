@@ -7,6 +7,10 @@ import { Order, OrderSchema } from '../../schemas/order.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema';
 import { Payment, PaymentSchema } from '../../schemas/payment.schema';
 import { LedgerModule } from '../ledger/ledger.module';
+import {
+  CustomerBalanceAdjustment,
+  CustomerBalanceAdjustmentSchema,
+} from '../../schemas/customerBalanceAdjustment.schema';
 
 @Module({
   imports: [
@@ -15,6 +19,7 @@ import { LedgerModule } from '../ledger/ledger.module';
       { name: Order.name, schema: OrderSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: Payment.name, schema: PaymentSchema },
+      { name: CustomerBalanceAdjustment.name, schema: CustomerBalanceAdjustmentSchema },
     ]),
     LedgerModule,
   ],

@@ -47,7 +47,7 @@ export class LedgerService {
       },
     ]);
 
-    const netBalance = result.length ? result[0].balance : 0;
+    const netBalance = result.reduce((sum, row) => sum + (row.balance || 0), 0);
 
     let direction: 'customer_owes' | 'we_owe_customer' | 'settled' = 'settled';
     let absoluteAmount = 0;
