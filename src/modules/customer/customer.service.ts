@@ -22,6 +22,7 @@ import {
   CustomerBalanceAdjustment,
   CustomerBalanceAdjustmentDocument,
 } from '../../schemas/customerBalanceAdjustment.schema';
+import { roundMoney } from '../../common/utils/money.util';
 
 @Injectable()
 export class CustomerService {
@@ -78,10 +79,11 @@ export class CustomerService {
     dto: BalanceAdjustmentDto,
     session: ClientSession,
   ) {
+    const normalizedAmount = roundMoney(dto.amount);
     const entryType = this.getEntryTypeForAdjustment(dto.direction);
     const adjustment = new this.customerBalanceAdjustmentModel({
       customerId,
-      amount: dto.amount,
+      amount: normalizedAmount,
       direction: dto.direction,
       note: dto.note,
     });
@@ -90,7 +92,7 @@ export class CustomerService {
     const ledgerEntry = new this.ledgerModel({
       customerId,
       entryType,
-      amount: dto.amount,
+      amount: normalizedAmount,
       sourceType: SourceType.ADJUSTMENT,
       sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ADJUSTMENT],
       sourceId: adjustment._id,
