@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Product } from '../../schemas/product.schema';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './product.dto';
 import { StockMovement } from '../../schemas/stockMovement.schema';
+import { roundMoney } from '../../common/utils/money.util';
 
 const PRODUCT_NEWLY_INCLUDED_FIELDS = ['batchNo', 'expiry', 'mfg'] as const;
 
@@ -40,7 +41,8 @@ export class ProductService {
   }
 
   async create(dto: CreateProductDto) {
-    const created = await this.productModel.create(dto);
+    const payload = { ...dto, unitPrice: roundMoney(dto.unitPrice) };
+    const created = await this.productModel.create(payload);
     return this.withProductNewFields(created.toObject());
   }
 
@@ -114,7 +116,15 @@ export class ProductService {
   }
 
   async update(id: string, dto: UpdateProductDto) {
-    const product = await this.productModel.findByIdAndUpdate(id, dto, { new: true }).lean().exec();
+    const payload = { ...dto } as UpdateProductDto;
+    if (payload.unitPrice !== undefined) {
+      payload.unitPrice = roundMoney(payload.unitPrice);
+    }
+
+    const product = await this.productModel
+      .findByIdAndUpdate(id, payload, { new: true })
+      .lean()
+      .exec();
 
     if (!product) {
       throw new NotFoundException('Product not found');
