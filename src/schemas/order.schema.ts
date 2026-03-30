@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { OrderStatus } from './schema.types';
+import { roundMoney } from '../common/utils/money.util';
 
 @Schema({ _id: false })
 export class OrderItem {
@@ -58,22 +59,22 @@ OrderSchema.pre('validate', function () {
   let totalDiscount = 0;
 
   for (const item of this.items) {
-    const gross = item.unitPrice * item.quantity;
+    const gross = roundMoney(item.unitPrice * item.quantity);
 
-    const discount = gross * ((item.discountPercentage ?? 0) / 100);
+    const discount = roundMoney(gross * ((item.discountPercentage ?? 0) / 100));
 
     // Store the calculated discount amount
     item.discountAmount = discount;
-    totalDiscount += discount;
+    totalDiscount = roundMoney(totalDiscount + discount);
 
-    item.lineTotal = Math.max(gross - discount, 0);
+    item.lineTotal = roundMoney(Math.max(gross - discount, 0));
 
-    subtotal += item.lineTotal;
+    subtotal = roundMoney(subtotal + item.lineTotal);
   }
 
-  this.subtotal = subtotal;
+  this.subtotal = roundMoney(subtotal);
 
-  this.discountTotal = totalDiscount;
+  this.discountTotal = roundMoney(totalDiscount);
 
-  this.grandTotal = subtotal;
+  this.grandTotal = roundMoney(subtotal);
 });
