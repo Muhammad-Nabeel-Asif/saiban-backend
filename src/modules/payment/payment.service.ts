@@ -11,6 +11,7 @@ import { Payment, PaymentDocument } from '../../schemas/payment.schema';
 import { LedgerEntry, LedgerEntryDocument } from '../../schemas/ledgerEntry.schema';
 import { Order, OrderSchemaDocument } from '../../schemas/order.schema';
 import { CreatePaymentDto } from './payment.dto';
+import { roundMoney } from '../../common/utils/money.util';
 
 @Injectable()
 export class PaymentService {
@@ -21,6 +22,7 @@ export class PaymentService {
   ) {}
   async recordPayment(createPaymentDto: CreatePaymentDto) {
     const { customerId, orderId, amount, paymentMethod, note } = createPaymentDto;
+    const normalizedAmount = roundMoney(amount);
     const session = await this.paymentModel.db.startSession();
     session.startTransaction();
 
@@ -40,10 +42,12 @@ export class PaymentService {
           { $match: { $or: orderIdMatch } },
           { $group: { _id: null, total: { $sum: '$amount' } } },
         ]);
-        const totalPaid = paidSoFar.length ? paidSoFar[0].total : 0;
-        if (totalPaid + amount > order.grandTotal) {
+        const totalPaid = roundMoney(paidSoFar.length ? paidSoFar[0].total : 0);
+        const orderTotal = roundMoney(order.grandTotal);
+
+        if (roundMoney(totalPaid + normalizedAmount) > orderTotal) {
           throw new BadRequestException(
-            `Payment exceeds order total. Order total: ${order.grandTotal}, Already paid: ${totalPaid}, Attempted: ${amount}`,
+            `Payment exceeds order total. Order total: ${orderTotal}, Already paid: ${totalPaid}, Attempted: ${normalizedAmount}`,
           );
         }
       }
@@ -52,7 +56,7 @@ export class PaymentService {
       const payment = new this.paymentModel({
         customerId,
         orderId: orderId || null,
-        amount,
+        amount: normalizedAmount,
         paymentMethod,
         note,
       });
@@ -62,7 +66,7 @@ export class PaymentService {
       const ledgerEntry = new this.ledgerModel({
         customerId,
         entryType: EntryType.CREDIT,
-        amount,
+        amount: normalizedAmount,
         sourceType: SourceType.PAYMENT,
         sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
         sourceId: payment._id,
