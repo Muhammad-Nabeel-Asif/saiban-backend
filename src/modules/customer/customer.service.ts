@@ -79,6 +79,29 @@ export class CustomerService {
     dto: BalanceAdjustmentDto,
     session: ClientSession,
   ) {
+    // #region agent log
+    (globalThis as any)
+      .fetch('http://127.0.0.1:7848/ingest/07181aa3-d0f8-4378-b796-ee0aa4633737', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '53ebf1' },
+        body: JSON.stringify({
+          sessionId: '53ebf1',
+          runId: 'pre-fix',
+          hypothesisId: 'H1',
+          location: 'customer.service.ts:createBalanceAdjustment:entry',
+          message: 'Incoming balance adjustment payload',
+          data: {
+            customerId: customerId?.toString?.() ?? customerId,
+            customerIdType: typeof customerId,
+            amount: dto.amount,
+            direction: dto.direction,
+          },
+          timestamp: Date.now(),
+        }),
+      })
+      .catch(() => {});
+    // #endregion
+
     const normalizedAmount = roundMoney(dto.amount);
     const entryType = this.getEntryTypeForAdjustment(dto.direction);
     const adjustment = new this.customerBalanceAdjustmentModel({
@@ -89,6 +112,28 @@ export class CustomerService {
     });
     await adjustment.save({ session });
 
+    // #region agent log
+    (globalThis as any)
+      .fetch('http://127.0.0.1:7848/ingest/07181aa3-d0f8-4378-b796-ee0aa4633737', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '53ebf1' },
+        body: JSON.stringify({
+          sessionId: '53ebf1',
+          runId: 'pre-fix',
+          hypothesisId: 'H2',
+          location: 'customer.service.ts:createBalanceAdjustment:after-adjustment-save',
+          message: 'Saved customer balance adjustment',
+          data: {
+            adjustmentId: adjustment._id?.toString?.(),
+            adjustmentCustomerId: adjustment.customerId?.toString?.() ?? adjustment.customerId,
+            amount: adjustment.amount,
+          },
+          timestamp: Date.now(),
+        }),
+      })
+      .catch(() => {});
+    // #endregion
+
     const ledgerEntry = new this.ledgerModel({
       customerId,
       entryType,
@@ -98,6 +143,29 @@ export class CustomerService {
       sourceId: adjustment._id,
     });
     await ledgerEntry.save({ session });
+
+    // #region agent log
+    (globalThis as any)
+      .fetch('http://127.0.0.1:7848/ingest/07181aa3-d0f8-4378-b796-ee0aa4633737', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '53ebf1' },
+        body: JSON.stringify({
+          sessionId: '53ebf1',
+          runId: 'pre-fix',
+          hypothesisId: 'H2',
+          location: 'customer.service.ts:createBalanceAdjustment:after-ledger-save',
+          message: 'Saved ledger entry for adjustment',
+          data: {
+            ledgerEntryId: ledgerEntry._id?.toString?.(),
+            ledgerEntryCustomerId: ledgerEntry.customerId?.toString?.() ?? ledgerEntry.customerId,
+            sourceType: ledgerEntry.sourceType,
+            sourceId: ledgerEntry.sourceId?.toString?.() ?? ledgerEntry.sourceId,
+          },
+          timestamp: Date.now(),
+        }),
+      })
+      .catch(() => {});
+    // #endregion
 
     return adjustment.toObject();
   }
