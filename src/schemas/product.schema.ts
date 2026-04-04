@@ -1,6 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, InferSchemaType } from 'mongoose';
-import { PackType, ProductFormulation } from './schema.types';
 
 @Schema({ timestamps: true })
 export class Product extends Document {
@@ -13,10 +12,10 @@ export class Product extends Document {
   @Prop()
   descriptionUrdu: string;
 
-  @Prop({ required: true, enum: ProductFormulation })
+  @Prop({ required: true, trim: true })
   formulation: string;
 
-  @Prop({ required: true, enum: PackType })
+  @Prop({ required: true, trim: true })
   packType: string;
 
   @Prop({ required: true })

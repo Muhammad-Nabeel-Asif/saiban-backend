@@ -9,7 +9,6 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PackType, ProductFormulation } from '../../schemas/schema.types';
 import { PartialType } from '@nestjs/mapped-types';
 
 export enum StockStatus {
@@ -31,11 +30,13 @@ export class CreateProductDto {
   @IsString()
   descriptionUrdu?: string;
 
-  @IsEnum(ProductFormulation)
-  formulation: ProductFormulation;
+  @IsString()
+  @IsNotEmpty()
+  formulation: string;
 
-  @IsEnum(PackType)
-  packType: PackType;
+  @IsString()
+  @IsNotEmpty()
+  packType: string;
 
   @Type(() => Number)
   @IsNumber()

@@ -50,15 +50,3 @@ export const PAYMENT_METHOD_OPTIONS = [
 ] as const;
 
 export type PaymentMethodOption = (typeof PAYMENT_METHOD_OPTIONS)[number];
-
-export enum ProductFormulation {
-  TABLET = 'tablet',
-  SYRUP = 'syrup',
-  DROPS = 'drops',
-}
-
-export enum PackType {
-  TABS = 'tabs',
-  ML = 'ml',
-  OTHER = 'other',
-}
