@@ -5,13 +5,11 @@ import {
   Param,
   ParseIntPipe,
   Query,
-  Res,
   UseGuards,
 } from '@nestjs/common';
 import { LedgerService } from './ledger.service';
 import { AuthGuard } from '../../guards/jwt-auth.guard';
 import { GetDateRangeReportDto } from './ledger.dto';
-import type { Response } from 'express';
 
 @Controller('ledger')
 @UseGuards(AuthGuard)
@@ -46,12 +44,7 @@ export class LedgerController {
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-    @Res({ passthrough: true }) res?: Response,
   ) {
-    // #region agent log
-    res?.setHeader('X-Ledger-Entries-Filter-Version', 'valid-customer-filter-v1');
-    res?.setHeader('X-Ledger-Entries-Node-Env', process.env.NODE_ENV || 'unknown');
-    // #endregion
     return this.ledgerService.getAllLedgerEntries(
       page,
       limit,
