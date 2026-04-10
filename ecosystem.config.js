@@ -11,7 +11,7 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
+        PORT: 4000,
         // Use MONGODB_URI (what app.module.ts expects)
         MONGODB_URI: process.env.MONGODB_URI_PROD || process.env.MONGODB_URI || 'mongodb://localhost:27017/saiban-prod',
         JWT_SECRET: process.env.JWT_SECRET,
@@ -45,7 +45,7 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'staging',
-        PORT: 3001, // Different port
+        PORT: 4001, // Different port
         // Use MONGODB_URI (what app.module.ts expects)
         MONGODB_URI: process.env.MONGODB_URI_STAGING || 'mongodb://localhost:27017/saiban-staging',
         JWT_SECRET: process.env.JWT_SECRET,
