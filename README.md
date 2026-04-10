@@ -87,8 +87,6 @@ MONGODB_URI_STAGING=mongodb+srv://user:password@cluster.mongodb.net/saiban-db-st
 JWT_SECRET=your-secret-key
 JWT_EXPIRATION=240h
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-LOW_STOCK_THRESHOLD=10
-DEFAULT_PAGE_SIZE=10
 ```
 
 ### Run in Development
