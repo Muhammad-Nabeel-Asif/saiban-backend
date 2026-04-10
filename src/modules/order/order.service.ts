@@ -15,6 +15,7 @@ import {
 import { StockMovement } from '../../schemas/stockMovement.schema';
 import { LedgerEntry } from '../../schemas/ledgerEntry.schema';
 import { Payment } from '../../schemas/payment.schema';
+import { LedgerService } from '../ledger/ledger.service';
 
 @Injectable()
 export class OrderService {
@@ -25,6 +26,7 @@ export class OrderService {
     @InjectModel(LedgerEntry.name) private ledgerEntryModel: Model<LedgerEntry>,
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     @InjectModel(Customer.name) private customerModel: Model<Customer>,
+    private ledgerService: LedgerService,
   ) {}
 
   async create(dto: CreateOrderDto): Promise<any> {
@@ -338,14 +340,76 @@ export class OrderService {
   async findOne(id: string) {
     const order = await this.orderModel
       .findById(id)
-      .populate('customerId', 'firstName lastName email phoneNumber')
-      .populate('items.productId', '')
+      .populate('customerId')
+      .populate('items.productId')
       .lean()
       .exec();
 
     if (!order) {
       throw new NotFoundException('Order not found');
     }
-    return order;
+
+    const rawCustomerId = order.customerId;
+    const customerIdStr =
+      rawCustomerId && typeof rawCustomerId === 'object' && '_id' in rawCustomerId
+        ? String((rawCustomerId as { _id: unknown })._id)
+        : String(rawCustomerId);
+
+    const customerBalance = await this.ledgerService.getCustomerBalance(customerIdStr);
+    const customerIdNormalized = this.normalizeOrderCustomerSnapshot(rawCustomerId, customerIdStr);
+
+    return {
+      ...order,
+      customerId: customerIdNormalized,
+      customerBalance,
+    };
+  }
+
+  /**
+   * Ensures every expected customer field is present (empty string when unset)
+   * so clients can read keys without optional chaining on missing properties.
+   */
+  private normalizeOrderCustomerSnapshot(
+    populated: unknown,
+    customerIdFallback: string,
+  ): {
+    _id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phoneNumber: string;
+    streetAddress: string;
+    city: string;
+    state: string;
+  } {
+    const empty = '';
+    const asStr = (v: unknown) => (v == null ? empty : String(v));
+
+    if (!populated || typeof populated !== 'object') {
+      return {
+        _id: customerIdFallback,
+        firstName: empty,
+        lastName: empty,
+        email: empty,
+        phoneNumber: empty,
+        streetAddress: empty,
+        city: empty,
+        state: empty,
+      };
+    }
+
+    const c = populated as Record<string, unknown>;
+    const id = c._id != null ? String(c._id) : customerIdFallback;
+
+    return {
+      _id: id,
+      firstName: asStr(c.firstName),
+      lastName: asStr(c.lastName),
+      email: asStr(c.email),
+      phoneNumber: asStr(c.phoneNumber),
+      streetAddress: asStr(c.streetAddress),
+      city: asStr(c.city),
+      state: asStr(c.state),
+    };
   }
 }

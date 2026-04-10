@@ -7,6 +7,7 @@ import { OrderService } from './order.service';
 import { Order, OrderSchema } from '../../schemas/order.schema';
 import { ProductModule } from '../product/product.module';
 import { CustomerModule } from '../customer/customer.module';
+import { LedgerModule } from '../ledger/ledger.module';
 import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema';
 import { Payment, PaymentSchema } from '../../schemas/payment.schema';
 import { Customer, CustomerSchema } from '../../schemas/customer.schema';
@@ -23,6 +24,7 @@ import { Customer, CustomerSchema } from '../../schemas/customer.schema';
     ]),
     ProductModule,
     CustomerModule,
+    LedgerModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],
