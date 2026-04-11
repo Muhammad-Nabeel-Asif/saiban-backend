@@ -20,5 +20,6 @@ jobs:
             git reset --hard origin/main
             npm install --production=false
             npm run build
-            pm2 restart ecosystem.config.js
+            pm2 delete ecosystem.config.js --silent || true
+            pm2 start ecosystem.config.js
             pm2 save
