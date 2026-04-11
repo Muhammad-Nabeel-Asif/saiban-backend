@@ -456,18 +456,18 @@ export class OrderService {
       .find({ $or: [{ invoiceNumber: { $exists: false } }, { invoiceNumber: null }] })
       .sort({ createdAt: 1 })
       .select('_id createdAt')
-      .lean()
+      .lean<{ _id: unknown; createdAt: Date }[]>()
       .exec();
 
     if (orders.length === 0) {
       return { updated: 0, skipped: 0 };
     }
 
-    const grouped = new Map<string, { _id: unknown; createdAt: Date }[]>();
+    const grouped = new Map<string, typeof orders>();
     for (const order of orders) {
       const key = this.buildCounterKey(new Date(order.createdAt));
       if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(order);
+      grouped.get(key)!.push(order);
     }
 
     let updated = 0;
