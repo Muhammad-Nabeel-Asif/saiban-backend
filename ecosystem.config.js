@@ -22,8 +22,6 @@ module.exports = {
       error_file: 'logs/production-error.log',
       out_file: 'logs/production-out.log',
       log_file: 'logs/production-combined.log',
-      time: false,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
       combine_logs: true,
 
@@ -56,8 +54,6 @@ module.exports = {
       error_file: 'logs/staging-error.log',
       out_file: 'logs/staging-out.log',
       log_file: 'logs/staging-combined.log',
-      time: false,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
       combine_logs: true,
 
