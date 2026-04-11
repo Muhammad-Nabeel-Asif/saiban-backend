@@ -37,4 +37,9 @@ export class OrderController {
   returnOrder(@Param('id') id: string) {
     return this.orderService.returnOrder(id);
   }
+
+  @Post('backfill-invoice-numbers')
+  backfillInvoiceNumbers() {
+    return this.orderService.backfillInvoiceNumbers();
+  }
 }

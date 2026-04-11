@@ -46,6 +46,9 @@ export class Order {
   @Prop({ required: true, min: 0 })
   grandTotal: number;
 
+  @Prop({ unique: true, sparse: true })
+  invoiceNumber?: string;
+
   @Prop()
   note?: string;
 }

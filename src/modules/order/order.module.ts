@@ -5,6 +5,7 @@ import { StockMovement, StockMovementSchema } from '../../schemas/stockMovement.
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 import { Order, OrderSchema } from '../../schemas/order.schema';
+import { Counter, CounterSchema } from '../../schemas/counter.schema';
 import { ProductModule } from '../product/product.module';
 import { CustomerModule } from '../customer/customer.module';
 import { LedgerModule } from '../ledger/ledger.module';
@@ -18,6 +19,7 @@ import { Customer, CustomerSchema } from '../../schemas/customer.schema';
       { name: Product.name, schema: ProductSchema },
       { name: StockMovement.name, schema: StockMovementSchema },
       { name: Order.name, schema: OrderSchema },
+      { name: Counter.name, schema: CounterSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: Customer.name, schema: CustomerSchema },

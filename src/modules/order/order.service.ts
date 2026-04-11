@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ClientSession, Model } from 'mongoose';
 import { Order } from '../../schemas/order.schema';
 import { Product } from '../../schemas/product.schema';
 import { Customer } from '../../schemas/customer.schema';
+import { Counter } from '../../schemas/counter.schema';
 import { CreateOrderDto, OrderQueryDto } from './order.dto';
 import {
   EntryType,
@@ -26,6 +27,7 @@ export class OrderService {
     @InjectModel(LedgerEntry.name) private ledgerEntryModel: Model<LedgerEntry>,
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     @InjectModel(Customer.name) private customerModel: Model<Customer>,
+    @InjectModel(Counter.name) private counterModel: Model<Counter>,
     private ledgerService: LedgerService,
   ) {}
 
@@ -72,11 +74,14 @@ export class OrderService {
       });
 
       // 4. Create order with PENDING status
+      const invoiceNumber = await this.generateInvoiceNumber(session);
+
       const order = new this.orderModel({
         customerId: dto.customerId,
         status: OrderStatus.PENDING,
         items,
         note: dto.note,
+        invoiceNumber,
       });
 
       await order.save({ session });
@@ -411,5 +416,81 @@ export class OrderService {
       city: asStr(c.city),
       state: asStr(c.state),
     };
+  }
+
+  /**
+   * Atomically increments a monthly counter and returns a formatted invoice number.
+   * Format: INV-YYMM-XXXX (e.g. INV-2604-0001)
+   * The counter resets each month via a new key.
+   */
+  private buildCounterKey(date: Date): string {
+    const yy = String(date.getFullYear()).slice(-2);
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    return `invoice-${yy}${mm}`;
+  }
+
+  private buildInvoiceString(counterKey: string, seq: number): string {
+    const yyMm = counterKey.replace('invoice-', '');
+    return `INV-${yyMm}-${String(seq).padStart(4, '0')}`;
+  }
+
+  private async generateInvoiceNumber(session: ClientSession): Promise<string> {
+    const key = this.buildCounterKey(new Date());
+
+    const counter = await this.counterModel.findOneAndUpdate(
+      { key },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true, session },
+    );
+
+    return this.buildInvoiceString(key, counter.seq);
+  }
+
+  /**
+   * Assigns invoice numbers to all existing orders that don't have one.
+   * Uses each order's createdAt to place it in the correct monthly bucket.
+   * Sorted by createdAt ascending so older orders get lower sequence numbers.
+   */
+  async backfillInvoiceNumbers(): Promise<{ updated: number; skipped: number }> {
+    const orders = await this.orderModel
+      .find({ $or: [{ invoiceNumber: { $exists: false } }, { invoiceNumber: null }] })
+      .sort({ createdAt: 1 })
+      .select('_id createdAt')
+      .lean()
+      .exec();
+
+    if (orders.length === 0) {
+      return { updated: 0, skipped: 0 };
+    }
+
+    const grouped = new Map<string, { _id: unknown; createdAt: Date }[]>();
+    for (const order of orders) {
+      const key = this.buildCounterKey(new Date(order.createdAt));
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(order);
+    }
+
+    let updated = 0;
+    for (const [counterKey, monthOrders] of grouped) {
+      const counter = await this.counterModel.findOneAndUpdate(
+        { key: counterKey },
+        { $inc: { seq: monthOrders.length } },
+        { new: true, upsert: true },
+      );
+
+      const startSeq = counter.seq - monthOrders.length + 1;
+
+      const bulkOps = monthOrders.map((order, i) => ({
+        updateOne: {
+          filter: { _id: order._id, invoiceNumber: { $exists: false } },
+          update: { $set: { invoiceNumber: this.buildInvoiceString(counterKey, startSeq + i) } },
+        },
+      }));
+
+      const result = await this.orderModel.bulkWrite(bulkOps);
+      updated += result.modifiedCount;
+    }
+
+    return { updated, skipped: orders.length - updated };
   }
 }
