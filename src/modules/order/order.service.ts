@@ -440,7 +440,7 @@ export class OrderService {
     const counter = await this.counterModel.findOneAndUpdate(
       { key },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true, session },
+      { returnDocument: 'after', upsert: true, session },
     );
 
     return this.buildInvoiceString(key, counter.seq);
@@ -475,7 +475,7 @@ export class OrderService {
       const counter = await this.counterModel.findOneAndUpdate(
         { key: counterKey },
         { $inc: { seq: monthOrders.length } },
-        { new: true, upsert: true },
+        { returnDocument: 'after', upsert: true },
       );
 
       const startSeq = counter.seq - monthOrders.length + 1;
