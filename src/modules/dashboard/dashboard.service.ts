@@ -6,6 +6,7 @@ import { Customer } from '../../schemas/customer.schema';
 import { Order } from '../../schemas/order.schema';
 import { OrderStatus } from '../../schemas/schema.types';
 import { LedgerService } from '../ledger/ledger.service';
+import { roundMoney } from '../../common/utils/money.util';
 
 @Injectable()
 export class DashboardService {
@@ -23,8 +24,8 @@ export class DashboardService {
       totalOrders,
       lowStockProducts,
       pendingOrders,
-      ledgerSummary,
       revenueResult,
+      paymentSummary,
     ] = await Promise.all([
       this.productModel.countDocuments(),
       this.customerModel.countDocuments(),
@@ -39,14 +40,16 @@ export class DashboardService {
         .populate('customerId', 'firstName lastName')
         .limit(10)
         .sort({ createdAt: -1 }),
-      this.ledgerService.getLedgerSummary(),
       this.orderModel.aggregate([
         { $match: { status: OrderStatus.COMPLETED } },
         { $group: { _id: null, totalRevenue: { $sum: '$grandTotal' } } },
       ]),
+      this.ledgerService.getDashboardPaymentSummary(),
     ]);
 
-    const totalRevenue = revenueResult.length ? revenueResult[0].totalRevenue : 0;
+    const totalRevenue = roundMoney(revenueResult.length ? revenueResult[0].totalRevenue : 0);
+    const receivedPayments = roundMoney(Math.max(paymentSummary?.netReceivedPayments ?? 0, 0));
+    const pendingPayments = roundMoney(Math.max(totalRevenue - receivedPayments, 0));
 
     return {
       metrics: {
@@ -54,6 +57,8 @@ export class DashboardService {
         totalCustomers,
         totalOrders,
         totalRevenue,
+        pendingPayments,
+        receivedPayments,
       },
       alerts: {
         lowStockProducts: lowStockProducts.map((p) => ({

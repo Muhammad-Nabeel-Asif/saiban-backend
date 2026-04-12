@@ -12,10 +12,17 @@ const MONEY_KEYS = new Set([
   'totalDebit',
   'totalCredit',
   'totalReceivable',
+  'pendingPayments',
+  'receivedPayments',
   'netAmount',
   'netBalance',
   'absoluteAmount',
   'balance',
+  'previousBalance',
+  'orderImpact',
+  'netPayable',
+  'currentOrderBill',
+  'balanceImpact',
 ]);
 
 export function roundMoney(value: number): number {

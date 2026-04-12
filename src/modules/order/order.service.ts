@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Model } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { Order } from '../../schemas/order.schema';
 import { Product } from '../../schemas/product.schema';
 import { Customer } from '../../schemas/customer.schema';
@@ -17,6 +17,7 @@ import { StockMovement } from '../../schemas/stockMovement.schema';
 import { LedgerEntry } from '../../schemas/ledgerEntry.schema';
 import { Payment } from '../../schemas/payment.schema';
 import { LedgerService } from '../ledger/ledger.service';
+import { roundMoney } from '../../common/utils/money.util';
 
 @Injectable()
 export class OrderService {
@@ -360,14 +361,125 @@ export class OrderService {
         ? String((rawCustomerId as { _id: unknown })._id)
         : String(rawCustomerId);
 
-    const customerBalance = await this.ledgerService.getCustomerBalance(customerIdStr);
+    const invoiceIssueAnchor = await this.getInvoiceIssueAnchorDate(
+      String(order._id),
+      (order as { createdAt?: Date }).createdAt,
+    );
+    const customerBalanceAtIssue = await this.ledgerService.getCustomerBalanceAsOf(
+      customerIdStr,
+      invoiceIssueAnchor,
+    );
     const customerIdNormalized = this.normalizeOrderCustomerSnapshot(rawCustomerId, customerIdStr);
+    const invoiceBalanceSummary = this.buildInvoiceBalanceSummaryAtIssue(
+      order.grandTotal,
+      customerBalanceAtIssue.netBalance,
+    );
 
     return {
       ...order,
       customerId: customerIdNormalized,
-      customerBalance,
+      invoiceBalanceSummary,
     };
+  }
+
+  private buildInvoiceBalanceSummaryAtIssue(orderGrandTotal: number, netBalanceAtIssue: number) {
+    const currentOrderBill = roundMoney(orderGrandTotal);
+    const orderBalanceImpact = roundMoney(currentOrderBill);
+    const netPayable = roundMoney(netBalanceAtIssue);
+    const previousBalance = roundMoney(netPayable - orderBalanceImpact);
+
+    return {
+      previousBalance: {
+        amount: previousBalance,
+        sign: this.getSignedSymbol(previousBalance),
+        direction: this.getBalanceDirection(previousBalance),
+        note: 'Balance before this order (snapshot at invoice issue time)',
+      },
+      currentOrderBill: {
+        amount: currentOrderBill,
+        sign: this.getSignedSymbol(orderBalanceImpact),
+        balanceImpact: orderBalanceImpact,
+        note: 'Current order bill impact at invoice issue time',
+      },
+      netPayable: {
+        amount: netPayable,
+        sign: this.getSignedSymbol(netPayable),
+        direction: this.getBalanceDirection(netPayable),
+        note: 'Balance right after this order was issued',
+      },
+      calculation: {
+        previousBalance,
+        orderImpact: orderBalanceImpact,
+        netPayable,
+        expression: `${this.toSignedCurrency(previousBalance)} ${this.operatorFor(orderBalanceImpact)} ${this.toSignedCurrency(Math.abs(orderBalanceImpact))} = ${this.toSignedCurrency(netPayable)}`,
+      },
+      legend: {
+        positive: '+ means customer payable increased',
+        negative: '- means customer has advance/credit',
+        zero: '0 means fully settled',
+      },
+      basis: 'as_of_invoice_issue',
+    };
+  }
+
+  private async getInvoiceIssueAnchorDate(
+    orderId: string,
+    orderCreatedAtFallback?: Date,
+  ): Promise<Date> {
+    const sourceIdMatch: any[] = [orderId];
+    if (Types.ObjectId.isValid(orderId)) {
+      sourceIdMatch.push(new Types.ObjectId(orderId));
+    }
+
+    const orderDebitEntry = await this.ledgerEntryModel
+      .findOne({
+        sourceType: SourceType.ORDER,
+        sourceId: { $in: sourceIdMatch },
+        entryType: EntryType.DEBIT,
+      })
+      .sort({ createdAt: 1 })
+      .select('createdAt')
+      .lean<{ createdAt?: Date }>()
+      .exec();
+
+    if (orderDebitEntry?.createdAt) {
+      return new Date(orderDebitEntry.createdAt);
+    }
+
+    if (orderCreatedAtFallback) {
+      return new Date(orderCreatedAtFallback);
+    }
+
+    return new Date();
+  }
+
+  private getSignedSymbol(amount: number): '+' | '-' | '0' {
+    if (amount > 0) return '+';
+    if (amount < 0) return '-';
+    return '0';
+  }
+
+  private getBalanceDirection(
+    amount: number,
+  ): 'customer_owes' | 'we_owe_customer' | 'settled' {
+    if (amount > 0) return 'customer_owes';
+    if (amount < 0) return 'we_owe_customer';
+    return 'settled';
+  }
+
+  private operatorFor(amount: number): '+' | '-' {
+    return amount >= 0 ? '+' : '-';
+  }
+
+  private toSignedCurrency(amount: number): string {
+    const absolute = Math.abs(roundMoney(amount));
+    const symbol = this.getSignedSymbol(amount);
+
+    if (symbol === '0') {
+      return 'Rs 0';
+    }
+
+    return `${symbol}Rs ${absolute}`;
   }
 
   /**

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LedgerEntry, LedgerEntryDocument } from '../../schemas/ledgerEntry.schema';
-import { EntryType } from '../../schemas/schema.types';
+import { EntryType, SourceType } from '../../schemas/schema.types';
 
 @Injectable()
 export class LedgerService {
@@ -23,6 +23,69 @@ export class LedgerService {
     const result = await this.ledgerModel.aggregate([
       {
         $match: { $or: matchConditions },
+      },
+      {
+        $group: {
+          _id: '$customerId',
+          totalDebit: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', EntryType.DEBIT] }, '$amount', 0],
+            },
+          },
+          totalCredit: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', EntryType.CREDIT] }, '$amount', 0],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          balance: { $subtract: ['$totalDebit', '$totalCredit'] },
+        },
+      },
+    ]);
+
+    const netBalance = result.reduce((sum, row) => sum + (row.balance || 0), 0);
+
+    let direction: 'customer_owes' | 'we_owe_customer' | 'settled' = 'settled';
+    let absoluteAmount = 0;
+
+    if (netBalance > 0) {
+      direction = 'customer_owes';
+      absoluteAmount = netBalance;
+    } else if (netBalance < 0) {
+      direction = 'we_owe_customer';
+      absoluteAmount = -netBalance;
+    }
+
+    return {
+      netBalance,
+      direction,
+      absoluteAmount,
+    };
+  }
+
+  async getCustomerBalanceAsOf(
+    customerId: string,
+    asOf: Date,
+  ): Promise<{
+    netBalance: number;
+    direction: 'customer_owes' | 'we_owe_customer' | 'settled';
+    absoluteAmount: number;
+  }> {
+    const matchConditions: any[] = [{ customerId }];
+    if (Types.ObjectId.isValid(customerId)) {
+      matchConditions.push({ customerId: new Types.ObjectId(customerId) });
+    }
+
+    const result = await this.ledgerModel.aggregate([
+      {
+        $match: {
+          $or: matchConditions,
+          createdAt: { $lte: asOf },
+        },
       },
       {
         $group: {
@@ -171,39 +234,49 @@ export class LedgerService {
       }
     }
 
+    const validCustomerPipeline = [
+      {
+        $addFields: {
+          normalizedCustomerId: {
+            $cond: [
+              { $eq: [{ $type: '$customerId' }, 'objectId'] },
+              '$customerId',
+              {
+                $convert: {
+                  input: '$customerId',
+                  to: 'objectId',
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: 'customers',
+          localField: 'normalizedCustomerId',
+          foreignField: '_id',
+          as: 'customerMatch',
+        },
+      },
+      { $match: { customerMatch: { $ne: [] } } },
+    ];
+
     const [validPageEntryIds, validTotalResult] = await Promise.all([
       this.ledgerModel
         .aggregate([
           { $match: filter },
-          { $sort: { createdAt: -1 } },
-          {
-            $lookup: {
-              from: 'customers',
-              localField: 'customerId',
-              foreignField: '_id',
-              as: 'customerMatch',
-            },
-          },
-          { $match: { customerMatch: { $ne: [] } } },
+          ...validCustomerPipeline,
+          { $sort: { createdAt: -1, _id: -1 } },
           { $skip: skip },
           { $limit: limit },
           { $project: { _id: 1 } },
         ])
         .exec(),
       this.ledgerModel
-        .aggregate([
-          { $match: filter },
-          {
-            $lookup: {
-              from: 'customers',
-              localField: 'customerId',
-              foreignField: '_id',
-              as: 'customerMatch',
-            },
-          },
-          { $match: { customerMatch: { $ne: [] } } },
-          { $count: 'total' },
-        ])
+        .aggregate([{ $match: filter }, ...validCustomerPipeline, { $count: 'total' }])
         .exec(),
     ]);
 
@@ -211,7 +284,7 @@ export class LedgerService {
     const entries = pageIds.length
       ? await this.ledgerModel
           .find({ _id: { $in: pageIds } })
-          .sort({ createdAt: -1 })
+          .sort({ createdAt: -1, _id: -1 })
           .populate('customerId', 'firstName lastName email')
           .populate('sourceId')
           .lean()
@@ -273,6 +346,43 @@ export class LedgerService {
     return report;
   }
 
+  async getDashboardPaymentSummary() {
+    const paymentSummary = await this.ledgerModel.aggregate([
+      {
+        $match: { sourceType: SourceType.PAYMENT },
+      },
+      {
+        $group: {
+          _id: null,
+          totalPaymentCredit: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', EntryType.CREDIT] }, '$amount', 0],
+            },
+          },
+          totalPaymentDebit: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', EntryType.DEBIT] }, '$amount', 0],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          totalPaymentCredit: 1,
+          totalPaymentDebit: 1,
+          netReceivedPayments: { $subtract: ['$totalPaymentCredit', '$totalPaymentDebit'] },
+        },
+      },
+    ]);
+
+    const resolvedPaymentSummary = paymentSummary.length
+      ? paymentSummary[0]
+      : { totalPaymentCredit: 0, totalPaymentDebit: 0, netReceivedPayments: 0 };
+
+    return resolvedPaymentSummary;
+  }
+
   async getLedgerSummary() {
     const summary = await this.ledgerModel.aggregate([
       {
@@ -300,6 +410,10 @@ export class LedgerService {
       },
     ]);
 
-    return summary.length ? summary[0] : { totalReceivable: 0, totalDebit: 0, totalCredit: 0 };
+    const resolvedSummary = summary.length
+      ? summary[0]
+      : { totalReceivable: 0, totalDebit: 0, totalCredit: 0 };
+
+    return resolvedSummary;
   }
 }
