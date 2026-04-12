@@ -122,7 +122,7 @@ export class ProductService {
     }
 
     const product = await this.productModel
-      .findByIdAndUpdate(id, payload, { new: true })
+      .findByIdAndUpdate(id, payload, { returnDocument: 'after' })
       .lean()
       .exec();
 

@@ -170,7 +170,7 @@ export class CustomerService {
 
   async update(id: string, dto: UpdateCustomerDto) {
     const customer = await this.customerModel
-      .findByIdAndUpdate(id, dto, { new: true })
+      .findByIdAndUpdate(id, dto, { returnDocument: 'after' })
       .lean()
       .exec();
 
