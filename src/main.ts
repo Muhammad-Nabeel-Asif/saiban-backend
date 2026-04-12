@@ -44,7 +44,6 @@ async function bootstrap() {
   app.useGlobalInterceptors(new LoggingInterceptor(), new MonetaryPrecisionInterceptor());
 
   app.setGlobalPrefix('api');
-  app.enableShutdownHooks();
 
   const port = Number(configService.get<string>('PORT') || 3000);
   const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
@@ -57,7 +56,6 @@ async function bootstrap() {
   logger.log('='.repeat(50));
 
   await app.listen(port || 3000);
-  process.send?.('ready');
 
   logger.log(`🚀 Application is running on: http://localhost:${port}/api`);
   logger.log(`📝 Logging is enabled and working properly`);

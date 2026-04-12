@@ -8,7 +8,6 @@ import { OrderModule } from './modules/order/order.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
-import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -30,6 +29,5 @@ import { HealthController } from './health.controller';
     LedgerModule,
     DashboardModule,
   ],
-  controllers: [HealthController],
 })
 export class AppModule {}

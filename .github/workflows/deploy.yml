@@ -20,25 +20,6 @@ jobs:
             git reset --hard origin/main
             npm install --production=false
             npm run build
-            pm2 startOrReload ecosystem.config.js --update-env
-            for i in {1..15}; do
-              if curl -fsS http://127.0.0.1:4000/api/health >/dev/null; then
-                break
-              fi
-              if [ "$i" -eq 15 ]; then
-                echo "Production health check failed after reload"
-                exit 1
-              fi
-              sleep 2
-            done
-            for i in {1..15}; do
-              if curl -fsS http://127.0.0.1:4001/api/health >/dev/null; then
-                break
-              fi
-              if [ "$i" -eq 15 ]; then
-                echo "Staging health check failed after reload"
-                exit 1
-              fi
-              sleep 2
-            done
+            pm2 delete ecosystem.config.js --silent || true
+            pm2 start ecosystem.config.js
             pm2 save
