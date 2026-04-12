@@ -7,8 +7,8 @@ module.exports = {
     {
       name: 'saiban-production',
       script: 'dist/main.js',
-      instances: '1',
-      exec_mode: 'fork',
+      instances: 2,
+      exec_mode: 'cluster',
       env: {
         NODE_ENV: 'production',
         PORT: 4000,
@@ -31,15 +31,16 @@ module.exports = {
       max_restarts: 10,
       min_uptime: '10s',
 
-      kill_timeout: 5000,
-      listen_timeout: 10000,
+      kill_timeout: 10000,
+      listen_timeout: 15000,
+      wait_ready: true,
     },
 
     // STAGING - Testing version for development
     {
       name: 'saiban-staging',
       script: 'dist/main.js',
-      instances: 1, // Use single instance for easier debugging
+      instances: 1, // Keep staging simple, but use reload-safe startup behavior
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'staging',
@@ -63,8 +64,9 @@ module.exports = {
       max_restarts: 10,
       min_uptime: '10s',
 
-      kill_timeout: 5000,
-      listen_timeout: 10000,
+      kill_timeout: 10000,
+      listen_timeout: 15000,
+      wait_ready: true,
     },
   ],
 };
