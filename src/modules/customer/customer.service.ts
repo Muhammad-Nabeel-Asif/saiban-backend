@@ -9,6 +9,7 @@ import {
   BalanceAdjustmentDto,
   CreateCustomerDto,
   CustomerQueryDto,
+  CustomerSort,
   UpdateCustomerDto,
 } from './customer.dto';
 import { LedgerService } from '../ledger/ledger.service';
@@ -132,16 +133,17 @@ export class CustomerService {
   async findAll(query: CustomerQueryDto) {
     const { pageNum, limitNum, skip } = this.getPagination(query.page, query.limit);
     const filter = this.buildSearchFilter(query.search);
+    const sortRecent = query.sort === CustomerSort.Recent;
+
+    let listQuery = this.customerModel.find(filter);
+    if (sortRecent) {
+      listQuery = listQuery.sort({ createdAt: -1 });
+    } else {
+      listQuery = listQuery.collation(NAME_SORT_COLLATION).sort({ firstName: 1, lastName: 1 });
+    }
 
     const [data, total] = await Promise.all([
-      this.customerModel
-        .find(filter)
-        .collation(NAME_SORT_COLLATION)
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ firstName: 1, lastName: 1 })
-        .lean()
-        .exec(),
+      listQuery.skip(skip).limit(limitNum).lean().exec(),
       this.customerModel.countDocuments(filter).exec(),
     ]);
 

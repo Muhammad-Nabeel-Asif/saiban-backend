@@ -12,6 +12,12 @@ import { PartialType } from '@nestjs/mapped-types';
 import { Transform, Type } from 'class-transformer';
 import { BalanceDirection } from '../../schemas/schema.types';
 
+/** GET /customers list ordering. Omit or `name` = A–Z; `recent` = newest created first (e.g. dashboard). */
+export enum CustomerSort {
+  Name = 'name',
+  Recent = 'recent',
+}
+
 class CustomerProfileDto {
   @IsNotEmpty()
   @IsString()
@@ -75,4 +81,8 @@ export class CustomerQueryDto {
 
   @IsOptional()
   search?: string;
+
+  @IsOptional()
+  @IsEnum(CustomerSort)
+  sort?: CustomerSort;
 }
