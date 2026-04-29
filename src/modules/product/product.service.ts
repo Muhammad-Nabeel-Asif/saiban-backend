@@ -8,6 +8,9 @@ import { roundMoney } from '../../common/utils/money.util';
 
 const PRODUCT_NEWLY_INCLUDED_FIELDS = ['batchNo', 'expiry', 'mfg'] as const;
 
+/** Case-insensitive alphabetical sort for product names (MongoDB collation). */
+const NAME_SORT_COLLATION = { locale: 'en', strength: 2 } as const;
+
 @Injectable()
 export class ProductService {
   constructor(
@@ -88,9 +91,10 @@ export class ProductService {
     const [data, total] = await Promise.all([
       this.productModel
         .find(filter)
+        .collation(NAME_SORT_COLLATION)
         .skip(skip)
         .limit(limitNum)
-        .sort({ createdAt: -1 })
+        .sort({ name: 1 })
         .lean()
         .exec(),
       this.productModel.countDocuments(filter).exec(),

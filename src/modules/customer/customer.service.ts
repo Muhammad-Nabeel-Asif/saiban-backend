@@ -24,6 +24,9 @@ import {
 } from '../../schemas/customerBalanceAdjustment.schema';
 import { roundMoney } from '../../common/utils/money.util';
 
+/** Case-insensitive alphabetical sort for customer names (MongoDB collation). */
+const NAME_SORT_COLLATION = { locale: 'en', strength: 2 } as const;
+
 @Injectable()
 export class CustomerService {
   constructor(
@@ -133,9 +136,10 @@ export class CustomerService {
     const [data, total] = await Promise.all([
       this.customerModel
         .find(filter)
+        .collation(NAME_SORT_COLLATION)
         .skip(skip)
         .limit(limitNum)
-        .sort({ createdAt: -1 })
+        .sort({ firstName: 1, lastName: 1 })
         .lean()
         .exec(),
       this.customerModel.countDocuments(filter).exec(),
