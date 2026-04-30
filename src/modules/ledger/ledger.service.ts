@@ -212,11 +212,20 @@ export class LedgerService {
   async getAllLedgerEntries(
     page: number = 1,
     limit: number = 10,
+    customerId?: string,
     startDate?: Date,
     endDate?: Date,
   ) {
     const skip = (page - 1) * limit;
     const filter: any = {};
+
+    if (customerId) {
+      const customerIdMatches: any[] = [{ customerId }];
+      if (Types.ObjectId.isValid(customerId)) {
+        customerIdMatches.push({ customerId: new Types.ObjectId(customerId) });
+      }
+      filter.$or = customerIdMatches;
+    }
 
     if (startDate || endDate) {
       filter.createdAt = {};
