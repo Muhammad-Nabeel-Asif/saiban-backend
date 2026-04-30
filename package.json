@@ -18,7 +18,8 @@
     "logs:staging": "pm2 logs saiban-staging",
     "stop:prod": "pm2 stop saiban-production",
     "stop:staging": "pm2 stop saiban-staging",
-    "status": "pm2 status"
+    "status": "pm2 status",
+    "sync:db": "node scripts/sync-db.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
