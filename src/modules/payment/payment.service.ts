@@ -70,6 +70,7 @@ export class PaymentService {
         sourceType: SourceType.PAYMENT,
         sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
         sourceId: payment._id,
+        note: note ?? null,
       });
       await ledgerEntry.save({ session });
 

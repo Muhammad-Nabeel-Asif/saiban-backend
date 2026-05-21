@@ -29,6 +29,9 @@ export class LedgerEntry {
 
   @Prop({ type: Types.ObjectId, required: true, refPath: 'sourceModel' })
   sourceId: Types.ObjectId;
+
+  @Prop()
+  note?: string;
 }
 
 export const LedgerEntrySchema = SchemaFactory.createForClass(LedgerEntry);

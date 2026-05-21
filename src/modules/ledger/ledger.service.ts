@@ -195,7 +195,11 @@ export class LedgerService {
       } else {
         runningBalance -= entry.amount;
       }
-      return { ...entry, balance: runningBalance };
+      return {
+        ...entry,
+        note: this.resolveEntryNote(entry),
+        balance: runningBalance,
+      };
     });
 
     return {
@@ -299,10 +303,14 @@ export class LedgerService {
           .lean()
           .exec()
       : [];
+    const normalizedEntries = entries.map((entry) => ({
+      ...entry,
+      note: this.resolveEntryNote(entry),
+    }));
     const total = validTotalResult.length ? validTotalResult[0].total : 0;
 
     return {
-      data: entries,
+      data: normalizedEntries,
       pagination: {
         page,
         limit,
@@ -424,5 +432,18 @@ export class LedgerService {
       : { totalReceivable: 0, totalDebit: 0, totalCredit: 0 };
 
     return resolvedSummary;
+  }
+
+  private resolveEntryNote(entry: any): string {
+    if (typeof entry?.note === 'string') {
+      return entry.note;
+    }
+
+    const source = entry?.sourceId;
+    if (source && typeof source === 'object' && typeof source.note === 'string') {
+      return source.note;
+    }
+
+    return '';
   }
 }

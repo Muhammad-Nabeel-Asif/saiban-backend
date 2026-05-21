@@ -105,6 +105,7 @@ export class OrderService {
         sourceType: SourceType.ORDER,
         sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ORDER],
         sourceId: order._id,
+        note: dto.note ?? null,
       });
 
       await ledgerEntry.save({ session });
@@ -245,6 +246,7 @@ export class OrderService {
         sourceType: SourceType.ORDER,
         sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ORDER],
         sourceId: order._id,
+        note: `Order cancelled: reversal for invoice ${order.invoiceNumber ?? String(order._id)}`,
       });
       await ledgerReversal.save({ session });
 
@@ -258,6 +260,7 @@ export class OrderService {
           sourceType: SourceType.PAYMENT,
           sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
           sourceId: autoPayment._id,
+          note: autoPayment.note ?? null,
         });
         await paymentReversal.save({ session });
       }
@@ -312,6 +315,7 @@ export class OrderService {
         sourceType: SourceType.RETURN,
         sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.RETURN],
         sourceId: order._id,
+        note: `Order returned: reversal for invoice ${order.invoiceNumber ?? String(order._id)}`,
       });
       await ledgerReversal.save({ session });
 
@@ -325,6 +329,7 @@ export class OrderService {
           sourceType: SourceType.PAYMENT,
           sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.PAYMENT],
           sourceId: autoPayment._id,
+          note: autoPayment.note ?? null,
         });
         await paymentReversal.save({ session });
       }

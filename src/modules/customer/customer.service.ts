@@ -100,6 +100,7 @@ export class CustomerService {
       sourceType: SourceType.ADJUSTMENT,
       sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ADJUSTMENT],
       sourceId: adjustment._id,
+      note: dto.note ?? null,
     });
     await ledgerEntry.save({ session });
 
@@ -283,8 +284,13 @@ export class CustomerService {
       this.ledgerModel.countDocuments(customerFilter).exec(),
     ]);
 
+    const normalizedData = data.map((entry) => ({
+      ...entry,
+      note: entry.note ?? '',
+    }));
+
     return {
-      data,
+      data: normalizedData,
       pagination: {
         page: pageNum,
         limit: limitNum,

@@ -19,7 +19,8 @@
     "stop:prod": "pm2 stop saiban-production",
     "stop:staging": "pm2 stop saiban-staging",
     "status": "pm2 status",
-    "sync:db": "node scripts/sync-db.js"
+    "sync:db": "node scripts/sync-db.js",
+    "backfill:ledger-notes": "node scripts/backfill-ledger-notes.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
