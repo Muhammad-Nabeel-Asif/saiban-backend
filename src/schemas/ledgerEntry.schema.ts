@@ -4,7 +4,7 @@ import { EntryType, SourceType } from './schema.types';
 
 @Schema({ timestamps: true })
 export class LedgerEntry {
-  @Prop({ type: Types.ObjectId, ref: 'Customer', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Customer', required: true, index: true })
   customerId: Types.ObjectId;
 
   @Prop({

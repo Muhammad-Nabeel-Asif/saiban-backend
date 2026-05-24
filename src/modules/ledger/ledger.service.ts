@@ -10,7 +10,28 @@ export class LedgerService {
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntryDocument>,
   ) {}
 
-  /** Normalize customerId so string/ObjectId duplicates are not double-counted. */
+  /**
+   * Builds an `$or` matcher that catches a customer's ledger entries regardless of
+   * whether `customerId` was persisted as a string or ObjectId in that row.
+   */
+  private buildCustomerIdMatch(customerId: string): { $or: Record<string, unknown>[] } {
+    const conditions: Record<string, unknown>[] = [{ customerId }];
+    if (Types.ObjectId.isValid(customerId)) {
+      conditions.push({ customerId: new Types.ObjectId(customerId) });
+    }
+    return { $or: conditions };
+  }
+
+  /**
+   * Aggregation stages that:
+   *  1. Normalize `customerId` (string or ObjectId) into a single ObjectId field
+   *  2. Drop rows whose customer cannot be cast to an ObjectId
+   *  3. Drop rows whose customer no longer exists in the customers collection
+   *
+   * Apply these BEFORE any `$group` so per-customer totals are computed against a
+   * single, canonical customer identity. Optional `extraMatch` is combined with the
+   * normalized-id filter for callers that also want to scope by source/entry type.
+   */
   private buildNormalizedCustomerStages(extraMatch: Record<string, unknown> = {}) {
     return [
       {
@@ -54,14 +75,9 @@ export class LedgerService {
     direction: 'customer_owes' | 'we_owe_customer' | 'settled';
     absoluteAmount: number;
   }> {
-    const matchConditions: any[] = [{ customerId }];
-    if (Types.ObjectId.isValid(customerId)) {
-      matchConditions.push({ customerId: new Types.ObjectId(customerId) });
-    }
-
     const result = await this.ledgerModel.aggregate([
       {
-        $match: { $or: matchConditions },
+        $match: this.buildCustomerIdMatch(customerId),
       },
       {
         $group: {
@@ -114,15 +130,10 @@ export class LedgerService {
     direction: 'customer_owes' | 'we_owe_customer' | 'settled';
     absoluteAmount: number;
   }> {
-    const matchConditions: any[] = [{ customerId }];
-    if (Types.ObjectId.isValid(customerId)) {
-      matchConditions.push({ customerId: new Types.ObjectId(customerId) });
-    }
-
     const result = await this.ledgerModel.aggregate([
       {
         $match: {
-          $or: matchConditions,
+          ...this.buildCustomerIdMatch(customerId),
           createdAt: { $lte: asOf },
         },
       },
@@ -263,11 +274,7 @@ export class LedgerService {
     const filter: any = {};
 
     if (customerId) {
-      const customerIdMatches: any[] = [{ customerId }];
-      if (Types.ObjectId.isValid(customerId)) {
-        customerIdMatches.push({ customerId: new Types.ObjectId(customerId) });
-      }
-      filter.$or = customerIdMatches;
+      Object.assign(filter, this.buildCustomerIdMatch(customerId));
     }
 
     if (startDate || endDate) {
@@ -286,35 +293,7 @@ export class LedgerService {
       }
     }
 
-    const validCustomerPipeline = [
-      {
-        $addFields: {
-          normalizedCustomerId: {
-            $cond: [
-              { $eq: [{ $type: '$customerId' }, 'objectId'] },
-              '$customerId',
-              {
-                $convert: {
-                  input: '$customerId',
-                  to: 'objectId',
-                  onError: null,
-                  onNull: null,
-                },
-              },
-            ],
-          },
-        },
-      },
-      {
-        $lookup: {
-          from: 'customers',
-          localField: 'normalizedCustomerId',
-          foreignField: '_id',
-          as: 'customerMatch',
-        },
-      },
-      { $match: { customerMatch: { $ne: [] } } },
-    ];
+    const validCustomerPipeline = this.buildNormalizedCustomerStages();
 
     const [validPageEntryIds, validTotalResult] = await Promise.all([
       this.ledgerModel
@@ -402,11 +381,16 @@ export class LedgerService {
     return report;
   }
 
+  /**
+   * Net payments received (CREDIT − DEBIT) across all payment-source ledger entries.
+   * Uses the same normalization pipeline as `getTotalPendingReceivables` so the
+   * "received" and "pending" cards on the dashboard share an identical universe:
+   *  - rows belong to a real customer
+   *  - rows tied to deleted/orphaned customers are excluded
+   */
   async getDashboardPaymentSummary() {
     const paymentSummary = await this.ledgerModel.aggregate([
-      {
-        $match: { sourceType: SourceType.PAYMENT },
-      },
+      ...this.buildNormalizedCustomerStages({ sourceType: SourceType.PAYMENT }),
       {
         $group: {
           _id: null,
