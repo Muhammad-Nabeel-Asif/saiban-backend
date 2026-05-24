@@ -400,6 +400,41 @@ export class LedgerService {
     return resolvedPaymentSummary;
   }
 
+  /** Sum of per-customer balances where the customer owes money (matches customer balance views). */
+  async getTotalPendingReceivables(): Promise<number> {
+    const result = await this.ledgerModel.aggregate([
+      {
+        $group: {
+          _id: '$customerId',
+          totalDebit: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', EntryType.DEBIT] }, '$amount', 0],
+            },
+          },
+          totalCredit: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', EntryType.CREDIT] }, '$amount', 0],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          balance: { $subtract: ['$totalDebit', '$totalCredit'] },
+        },
+      },
+      { $match: { balance: { $gt: 0 } } },
+      {
+        $group: {
+          _id: null,
+          totalPending: { $sum: '$balance' },
+        },
+      },
+    ]);
+
+    return result.length ? result[0].totalPending : 0;
+  }
+
   async getLedgerSummary() {
     const summary = await this.ledgerModel.aggregate([
       {

@@ -26,6 +26,7 @@ export class DashboardService {
       pendingOrders,
       revenueResult,
       paymentSummary,
+      totalPendingReceivables,
     ] = await Promise.all([
       this.productModel.countDocuments(),
       this.customerModel.countDocuments(),
@@ -45,11 +46,12 @@ export class DashboardService {
         { $group: { _id: null, totalRevenue: { $sum: '$grandTotal' } } },
       ]),
       this.ledgerService.getDashboardPaymentSummary(),
+      this.ledgerService.getTotalPendingReceivables(),
     ]);
 
     const totalRevenue = roundMoney(revenueResult.length ? revenueResult[0].totalRevenue : 0);
     const receivedPayments = roundMoney(Math.max(paymentSummary?.netReceivedPayments ?? 0, 0));
-    const pendingPayments = roundMoney(Math.max(totalRevenue - receivedPayments, 0));
+    const pendingPayments = roundMoney(totalPendingReceivables);
 
     return {
       metrics: {
