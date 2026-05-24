@@ -33,6 +33,15 @@ export function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * MONEY_PRECISION_FACTOR) / MONEY_PRECISION_FACTOR;
 }
 
+/** Fixed two-decimal string for API responses (e.g. 250.5 → "250.50"). */
+export function formatMoneyDisplay(value: number): string {
+  if (!Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return roundMoney(value).toFixed(2);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object') {
     return false;
@@ -42,9 +51,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-export function roundMoneyFieldsDeep<T>(input: T): T {
+export function formatMoneyFieldsDeep<T>(input: T): T {
   if (Array.isArray(input)) {
-    return input.map((item) => roundMoneyFieldsDeep(item)) as T;
+    return input.map((item) => formatMoneyFieldsDeep(item)) as T;
   }
 
   if (!isPlainObject(input)) {
@@ -54,11 +63,11 @@ export function roundMoneyFieldsDeep<T>(input: T): T {
   const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     if (typeof value === 'number' && MONEY_KEYS.has(key)) {
-      output[key] = roundMoney(value);
+      output[key] = formatMoneyDisplay(value);
       continue;
     }
 
-    output[key] = roundMoneyFieldsDeep(value);
+    output[key] = formatMoneyFieldsDeep(value);
   }
 
   return output as T;
