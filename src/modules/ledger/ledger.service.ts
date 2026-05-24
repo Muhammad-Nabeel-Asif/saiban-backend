@@ -10,6 +10,45 @@ export class LedgerService {
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntryDocument>,
   ) {}
 
+  /** Normalize customerId so string/ObjectId duplicates are not double-counted. */
+  private buildNormalizedCustomerStages(extraMatch: Record<string, unknown> = {}) {
+    return [
+      {
+        $addFields: {
+          normalizedCustomerId: {
+            $cond: [
+              { $eq: [{ $type: '$customerId' }, 'objectId'] },
+              '$customerId',
+              {
+                $convert: {
+                  input: '$customerId',
+                  to: 'objectId',
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        $match: {
+          normalizedCustomerId: { $ne: null },
+          ...extraMatch,
+        },
+      },
+      {
+        $lookup: {
+          from: 'customers',
+          localField: 'normalizedCustomerId',
+          foreignField: '_id',
+          as: 'customerMatch',
+        },
+      },
+      { $match: { customerMatch: { $ne: [] } } },
+    ];
+  }
+
   async getCustomerBalance(customerId: string): Promise<{
     netBalance: number;
     direction: 'customer_owes' | 'we_owe_customer' | 'settled';
@@ -400,12 +439,16 @@ export class LedgerService {
     return resolvedPaymentSummary;
   }
 
-  /** Sum of per-customer balances where the customer owes money (matches customer balance views). */
+  /**
+   * Total outstanding from customers (sum of positive balances).
+   * Groups by normalized customerId so string/ObjectId duplicates are not double-counted.
+   */
   async getTotalPendingReceivables(): Promise<number> {
     const result = await this.ledgerModel.aggregate([
+      ...this.buildNormalizedCustomerStages(),
       {
         $group: {
-          _id: '$customerId',
+          _id: '$normalizedCustomerId',
           totalDebit: {
             $sum: {
               $cond: [{ $eq: ['$entryType', EntryType.DEBIT] }, '$amount', 0],
