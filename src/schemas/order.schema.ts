@@ -55,6 +55,8 @@ export class Order {
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
 
+OrderSchema.index({ status: 1, createdAt: 1 });
+
 export type OrderSchemaDocument = Order & Document;
 
 OrderSchema.pre('validate', function () {

@@ -2,6 +2,7 @@ const MONEY_PRECISION_FACTOR = 100;
 
 const MONEY_KEYS = new Set([
   'amount',
+  'revenue',
   'subtotal',
   'discountTotal',
   'grandTotal',
