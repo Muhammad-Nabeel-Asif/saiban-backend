@@ -53,7 +53,12 @@ export class AuthService {
 
     await user.save();
 
-    return { message: 'User registered successfully' };
+    const token = this.signToken(user);
+
+    return {
+      access_token: token,
+      user: this.toUserResponse(user),
+    };
   }
 
   async login(loginDto: LoginDto) {
@@ -69,14 +74,22 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const payload = { sub: user._id, email: user.email, role: user.role };
-
-    const token = this.jwtService.sign(payload);
+    const token = this.signToken(user);
 
     return {
       access_token: token,
       user: this.toUserResponse(user),
     };
+  }
+
+  async getMe(userId: string) {
+    const user = await this.userModel.findById(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    return { user: this.toUserResponse(user) };
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto, clientIp?: string) {
@@ -94,7 +107,7 @@ export class AuthService {
       );
 
       const resetUrl = this.buildResetUrl(token);
-      await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
+      await this.mailService.sendPasswordResetEmail(user.email, resetUrl, user.name);
     }
 
     return { message: FORGOT_PASSWORD_MESSAGE };
@@ -116,9 +129,12 @@ export class AuthService {
     await this.userModel.updateOne(
       { _id: user._id },
       {
-        password: hashedPassword,
-        passwordResetToken: null,
-        passwordResetExpires: null,
+        $set: {
+          password: hashedPassword,
+          passwordResetToken: null,
+          passwordResetExpires: null,
+        },
+        $inc: { tokenVersion: 1 },
       },
     );
 
@@ -147,16 +163,29 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
 
-    await this.userModel.updateOne(
-      { _id: user._id },
-      {
-        password: hashedPassword,
-        passwordResetToken: null,
-        passwordResetExpires: null,
-      },
-    );
+    const updatedUser = await this.userModel
+      .findByIdAndUpdate(
+        user._id,
+        {
+          $set: {
+            password: hashedPassword,
+            passwordResetToken: null,
+            passwordResetExpires: null,
+          },
+          $inc: { tokenVersion: 1 },
+        },
+        { returnDocument: 'after' },
+      )
+      .exec();
 
-    return { message: PASSWORD_UPDATED_MESSAGE };
+    if (!updatedUser) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    return {
+      message: PASSWORD_UPDATED_MESSAGE,
+      access_token: this.signToken(updatedUser),
+    };
   }
 
   async updateProfile(userId: string, updateProfileDto: UpdateProfileDto) {
@@ -202,6 +231,15 @@ export class AuthService {
   private buildResetUrl(token: string): string {
     const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
     return `${frontendUrl.replace(/\/$/, '')}/reset-password?token=${token}`;
+  }
+
+  private signToken(user: User): string {
+    return this.jwtService.sign({
+      sub: user._id,
+      email: user.email,
+      role: user.role,
+      tv: user.tokenVersion ?? 0,
+    });
   }
 
   private toUserResponse(user: User) {

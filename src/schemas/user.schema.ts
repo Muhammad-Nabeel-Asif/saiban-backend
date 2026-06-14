@@ -24,6 +24,9 @@ export class User extends Document {
   @Prop()
   passwordResetExpires?: Date;
 
+  @Prop({ default: 0 })
+  tokenVersion: number;
+
   @Prop()
   createdAt: Date;
 

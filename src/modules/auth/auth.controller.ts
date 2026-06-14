@@ -1,4 +1,4 @@
-import { Body, Controller, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   ChangePasswordDto,
@@ -44,6 +44,12 @@ export class AuthController {
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
     return this.authService.changePassword(userId, changePasswordDto);
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard)
+  async getMe(@CurrentUserId() userId: string) {
+    return this.authService.getMe(userId);
   }
 
   @Patch('profile')
