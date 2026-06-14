@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import {
+  renderPasswordResetHtml,
+  renderPasswordResetPlainText,
+} from './templates/password-reset';
 
 @Injectable()
 export class MailService {
@@ -26,22 +30,26 @@ export class MailService {
     });
   }
 
-  async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
+  async sendPasswordResetEmail(
+    to: string,
+    resetUrl: string,
+    userName?: string | null,
+  ): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM', 'noreply@saiban.app');
     const subject = 'Reset your Saiban password';
-    const text = [
-      'You requested a password reset for your Saiban account.',
-      '',
-      `Reset your password: ${resetUrl}`,
-      '',
-      'This link expires in 1 hour. If you did not request this, you can ignore this email.',
-    ].join('\n');
+    const expiryHours = Number(this.configService.get('PASSWORD_RESET_EXPIRY_HOURS', 1));
+    const emailParams = { resetUrl, userName, expiryHours };
+
+    const text = renderPasswordResetPlainText(emailParams);
+    const html = renderPasswordResetHtml(emailParams);
 
     if (!this.transporter) {
-      this.logger.warn(`SMTP not configured — password reset link for ${to}: ${resetUrl}`);
+      this.logger.warn(
+        `SMTP not configured — password reset for ${to}:\n${renderPasswordResetPlainText(emailParams)}`,
+      );
       return;
     }
 
-    await this.transporter.sendMail({ from, to, subject, text });
+    await this.transporter.sendMail({ from, to, subject, text, html });
   }
 }
