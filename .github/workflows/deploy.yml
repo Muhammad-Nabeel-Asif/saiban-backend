@@ -15,11 +15,13 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /home/ubuntu/saiban-backend
             git fetch origin main
             git reset --hard origin/main
             npm install --production=false
             npm run build
+            test -f dist/main.js
             pm2 delete ecosystem.config.js --silent || true
             pm2 start ecosystem.config.js
             pm2 save
