@@ -20,7 +20,10 @@
     "stop:staging": "pm2 stop saiban-staging",
     "status": "pm2 status",
     "sync:db": "node scripts/sync-db.js",
-    "backfill:ledger-notes": "node scripts/backfill-ledger-notes.js"
+    "backfill:ledger-notes": "node scripts/backfill-ledger-notes.js",
+    "db:reset-seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts",
+    "db:reset": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts --reset-only",
+    "db:seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts --seed-only"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
