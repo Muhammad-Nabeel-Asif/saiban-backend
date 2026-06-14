@@ -107,8 +107,27 @@ async function resetCollections(): Promise<void> {
   console.log('\n[✓] Reset complete (users preserved)\n');
 }
 
+async function resolveSeedUserId(): Promise<string> {
+  const uri = process.env.MONGODB_URI!;
+  if (mongoose.connection.readyState === 0) {
+    await mongoose.connect(uri);
+  }
+
+  const users = mongoose.connection.db!.collection('users');
+  const existing = await users.find({}).sort({ createdAt: 1 }).limit(1).next();
+
+  if (existing?._id) {
+    console.log(`[~] Seeding as user: ${existing.email} (${existing._id})\n`);
+    return String(existing._id);
+  }
+
+  fail('No users found. Register an account first, then run db:reset-seed.');
+}
+
 async function seedDatabase(): Promise<void> {
   console.log('[~] Bootstrapping NestJS application context...\n');
+
+  const seedUserId = await resolveSeedUserId();
 
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'],
@@ -126,7 +145,7 @@ async function seedDatabase(): Promise<void> {
   console.log('[~] Creating products...');
   for (const product of SEED_PRODUCTS) {
     const { key, ...dto } = product;
-    const created = await productService.create({ ...dto });
+    const created = await productService.create(seedUserId, { ...dto });
     productIds.set(key, String(created._id));
     console.log(`    + ${product.name} (${product.quantityInStock} in stock)`);
   }
@@ -134,7 +153,7 @@ async function seedDatabase(): Promise<void> {
   console.log('\n[~] Creating customers...');
   for (const customer of SEED_CUSTOMERS) {
     const { key, ...dto } = customer;
-    const created = await customerService.create({ ...dto });
+    const created = await customerService.create(seedUserId, { ...dto });
     customerIds.set(key, String(created._id));
     const label = [customer.firstName, customer.lastName].filter(Boolean).join(' ');
     console.log(`    + ${label} — ${customer.city}`);
@@ -161,7 +180,7 @@ async function seedDatabase(): Promise<void> {
       };
     });
 
-    const order = await orderService.create({
+    const order = await orderService.create(seedUserId, {
       customerId,
       items,
       note: spec.note,
@@ -173,10 +192,10 @@ async function seedDatabase(): Promise<void> {
 
     let status = 'pending';
     if (spec.cancel) {
-      await orderService.cancelOrder(orderId);
+      await orderService.cancelOrder(seedUserId, orderId);
       status = 'cancelled';
     } else if (spec.confirm) {
-      await orderService.confirmOrder(orderId);
+      await orderService.confirmOrder(seedUserId, orderId);
       status = 'completed';
 
       if (spec.payments?.length) {
@@ -188,7 +207,7 @@ async function seedDatabase(): Promise<void> {
 
           if (amount <= 0) continue;
 
-          await paymentService.recordPayment({
+          await paymentService.recordPayment(seedUserId, {
             customerId,
             orderId,
             amount,
@@ -200,7 +219,7 @@ async function seedDatabase(): Promise<void> {
       }
 
       if (spec.returnAfterConfirm) {
-        await orderService.returnOrder(orderId);
+        await orderService.returnOrder(seedUserId, orderId);
         status = 'returned';
       }
     }
@@ -215,7 +234,7 @@ async function seedDatabase(): Promise<void> {
       fail(`Unknown customer key: ${payment.customerKey}`);
     }
 
-    await paymentService.recordPayment({
+    await paymentService.recordPayment(seedUserId, {
       customerId,
       amount: payment.amount,
       paymentMethod: payment.method,
@@ -227,7 +246,7 @@ async function seedDatabase(): Promise<void> {
   console.log('\n[~] Verifying customer balances...\n');
   for (const customer of SEED_CUSTOMERS) {
     const customerId = customerIds.get(customer.key)!;
-    const balance = await ledgerService.getCustomerBalance(customerId);
+    const balance = await ledgerService.getCustomerBalance(seedUserId, customerId);
     const label = [customer.firstName, customer.lastName].filter(Boolean).join(' ');
     console.log(
       `    ${label}: Rs ${balance.absoluteAmount} (${balance.direction}) — net ${balance.netBalance}`,
