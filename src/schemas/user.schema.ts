@@ -19,6 +19,12 @@ export class User extends Document {
   isActive: boolean;
 
   @Prop()
+  passwordResetToken?: string;
+
+  @Prop()
+  passwordResetExpires?: Date;
+
+  @Prop()
   createdAt: Date;
 
   @Prop()
