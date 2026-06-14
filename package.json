@@ -23,9 +23,7 @@
     "backfill:ledger-notes": "node scripts/backfill-ledger-notes.js",
     "db:reset-seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts",
     "db:reset": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts --reset-only",
-    "db:seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts --seed-only",
-    "db:migrate-user-scope": "ts-node -r tsconfig-paths/register scripts/migrate-user-scope.ts",
-    "test:e2e": "ts-node -r tsconfig-paths/register scripts/e2e-user-scope.test.ts"
+    "db:seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts --seed-only"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
