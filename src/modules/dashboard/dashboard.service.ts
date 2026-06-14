@@ -7,6 +7,7 @@ import { Order } from '../../schemas/order.schema';
 import { OrderStatus } from '../../schemas/schema.types';
 import { LedgerService } from '../ledger/ledger.service';
 import { roundMoney } from '../../common/utils/money.util';
+import { userScopeFilter } from '../../common/utils/user-scope.util';
 import { DashboardRevenueRange, DashboardRevenueTrendQueryDto } from './dashboard.dto';
 
 @Injectable()
@@ -41,7 +42,9 @@ export class DashboardService {
    *                      orders or opening balance adjustments that are not yet
    *                      reflected in completed-order revenue.
    */
-  async getDashboardMetrics() {
+  async getDashboardMetrics(userId: string) {
+    const userFilter = userScopeFilter(userId);
+
     const [
       totalProducts,
       totalCustomers,
@@ -52,25 +55,26 @@ export class DashboardService {
       paymentSummary,
       totalPendingReceivables,
     ] = await Promise.all([
-      this.productModel.countDocuments(),
-      this.customerModel.countDocuments(),
-      this.orderModel.countDocuments(),
+      this.productModel.countDocuments(userFilter),
+      this.customerModel.countDocuments(userFilter),
+      this.orderModel.countDocuments(userFilter),
       this.productModel
         .find({
+          ...userFilter,
           $expr: { $lte: ['$quantityInStock', '$lowStockThreshold'] },
         })
         .limit(20),
       this.orderModel
-        .find({ status: OrderStatus.PENDING })
+        .find({ ...userFilter, status: OrderStatus.PENDING })
         .populate('customerId', 'firstName lastName')
         .limit(10)
         .sort({ createdAt: -1 }),
       this.orderModel.aggregate([
-        { $match: { status: OrderStatus.COMPLETED } },
+        { $match: { ...userFilter, status: OrderStatus.COMPLETED } },
         { $group: { _id: null, totalRevenue: { $sum: '$grandTotal' } } },
       ]),
-      this.ledgerService.getDashboardPaymentSummary(),
-      this.ledgerService.getTotalPendingReceivables(),
+      this.ledgerService.getDashboardPaymentSummary(userId),
+      this.ledgerService.getTotalPendingReceivables(userId),
     ]);
 
     const totalRevenue = roundMoney(revenueResult.length ? revenueResult[0].totalRevenue : 0);
@@ -106,7 +110,8 @@ export class DashboardService {
     };
   }
 
-  async getRevenueTrend(query: DashboardRevenueTrendQueryDto) {
+  async getRevenueTrend(userId: string, query: DashboardRevenueTrendQueryDto) {
+    const userFilter = userScopeFilter(userId);
     const timezone = this.resolveTimezone(query.timezone);
     const todayInTimezone = this.formatDateInTimezone(new Date(), timezone);
     const rangeDayCount = DashboardService.RANGE_DAY_COUNT[query.range];
@@ -143,6 +148,7 @@ export class DashboardService {
     const aggregation = await this.orderModel.aggregate([
       {
         $match: {
+          ...userFilter,
           status: OrderStatus.COMPLETED,
           createdAt: {
             $gte: rangeStartUtc,

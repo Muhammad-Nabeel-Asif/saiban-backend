@@ -18,6 +18,7 @@ import { LedgerEntry } from '../../schemas/ledgerEntry.schema';
 import { Payment } from '../../schemas/payment.schema';
 import { LedgerService } from '../ledger/ledger.service';
 import { roundMoney } from '../../common/utils/money.util';
+import { toUserObjectId, userScopeFilter } from '../../common/utils/user-scope.util';
 
 @Injectable()
 export class OrderService {
@@ -32,14 +33,23 @@ export class OrderService {
     private ledgerService: LedgerService,
   ) {}
 
-  async create(dto: CreateOrderDto): Promise<any> {
+  async create(userId: string, dto: CreateOrderDto): Promise<any> {
     const session = await this.orderModel.db.startSession();
     session.startTransaction();
 
     try {
+      const customer = await this.customerModel
+        .findOne({ _id: dto.customerId, ...userScopeFilter(userId) })
+        .session(session);
+      if (!customer) {
+        throw new NotFoundException('Customer not found');
+      }
+
       // 1. Fetch product prices and validate stock
       const productIds = dto.items.map((i) => i.productId);
-      const products = await this.productModel.find({ _id: { $in: productIds } }).session(session);
+      const products = await this.productModel
+        .find({ _id: { $in: productIds }, ...userScopeFilter(userId) })
+        .session(session);
 
       if (products.length !== productIds.length) {
         throw new BadRequestException('Some products not found');
@@ -75,9 +85,10 @@ export class OrderService {
       });
 
       // 4. Create order with PENDING status
-      const invoiceNumber = await this.generateInvoiceNumber(session);
+      const invoiceNumber = await this.generateInvoiceNumber(userId, session);
 
       const order = new this.orderModel({
+        userId: toUserObjectId(userId),
         customerId: dto.customerId,
         status: OrderStatus.PENDING,
         items,
@@ -114,26 +125,31 @@ export class OrderService {
       await session.endSession();
       return order;
     } catch (err) {
-      console.error({ err });
       await session.abortTransaction();
       await session.endSession();
       throw err;
     }
   }
 
-  async findAll(query: OrderQueryDto) {
+  async findAll(userId: string, query: OrderQueryDto) {
     const { page = 1, limit = 10, search, status, customerId } = query;
-    const filter: any = {};
+    const filter: any = { ...userScopeFilter(userId) };
 
     // Handle customerId filter
     if (customerId) {
-      filter.customerId = customerId;
+      const ownedCustomer = await this.customerModel
+        .findOne({ _id: customerId, ...userScopeFilter(userId) })
+        .select('_id')
+        .lean()
+        .exec();
+      filter.customerId = ownedCustomer ? customerId : null;
     }
     // If search is provided, find matching customers first
     else if (search) {
       const safe = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const matchingCustomers = await this.customerModel
         .find({
+          ...userScopeFilter(userId),
           $or: [
             { firstName: { $regex: safe, $options: 'i' } },
             { lastName: { $regex: safe, $options: 'i' } },
@@ -184,8 +200,8 @@ export class OrderService {
     };
   }
 
-  async confirmOrder(orderId: string) {
-    const order = await this.orderModel.findById(orderId);
+  async confirmOrder(userId: string, orderId: string) {
+    const order = await this.orderModel.findOne({ _id: orderId, ...userScopeFilter(userId) });
     if (!order) throw new NotFoundException('Order not found');
     if (order.status === OrderStatus.COMPLETED)
       throw new BadRequestException('Order already completed');
@@ -203,12 +219,12 @@ export class OrderService {
     };
   }
 
-  async cancelOrder(orderId: string) {
+  async cancelOrder(userId: string, orderId: string) {
     const session = await this.orderModel.db.startSession();
     session.startTransaction();
 
     try {
-      const order = await this.orderModel.findById(orderId).session(session);
+      const order = await this.orderModel.findOne({ _id: orderId, ...userScopeFilter(userId) }).session(session);
       if (!order) throw new NotFoundException('Order not found');
       if (order.status === OrderStatus.CANCELLED)
         throw new BadRequestException('Order already cancelled');
@@ -276,12 +292,12 @@ export class OrderService {
     }
   }
 
-  async returnOrder(orderId: string) {
+  async returnOrder(userId: string, orderId: string) {
     const session = await this.orderModel.db.startSession();
     session.startTransaction();
 
     try {
-      const order = await this.orderModel.findById(orderId).session(session);
+      const order = await this.orderModel.findOne({ _id: orderId, ...userScopeFilter(userId) }).session(session);
       if (!order) throw new NotFoundException('Order not found');
       if (order.status !== OrderStatus.COMPLETED)
         throw new BadRequestException('Only completed orders can be returned');
@@ -348,9 +364,9 @@ export class OrderService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(userId: string, id: string) {
     const order = await this.orderModel
-      .findById(id)
+      .findOne({ _id: id, ...userScopeFilter(userId) })
       .populate('customerId')
       .populate('items.productId')
       .lean()
@@ -371,6 +387,7 @@ export class OrderService {
       (order as { createdAt?: Date }).createdAt,
     );
     const customerBalanceAtIssue = await this.ledgerService.getCustomerBalanceAsOf(
+      userId,
       customerIdStr,
       invoiceIssueAnchor,
     );
@@ -540,19 +557,19 @@ export class OrderService {
    * Format: INV-YYMM-XXXX (e.g. INV-2604-0001)
    * The counter resets each month via a new key.
    */
-  private buildCounterKey(date: Date): string {
+  private buildCounterKey(userId: string, date: Date): string {
     const yy = String(date.getFullYear()).slice(-2);
     const mm = String(date.getMonth() + 1).padStart(2, '0');
-    return `invoice-${yy}${mm}`;
+    return `invoice-${userId}-${yy}${mm}`;
   }
 
   private buildInvoiceString(counterKey: string, seq: number): string {
-    const yyMm = counterKey.replace('invoice-', '');
+    const yyMm = counterKey.split('-').slice(-1)[0];
     return `INV-${yyMm}-${String(seq).padStart(4, '0')}`;
   }
 
-  private async generateInvoiceNumber(session: ClientSession): Promise<string> {
-    const key = this.buildCounterKey(new Date());
+  private async generateInvoiceNumber(userId: string, session: ClientSession): Promise<string> {
+    const key = this.buildCounterKey(userId, new Date());
 
     const counter = await this.counterModel.findOneAndUpdate(
       { key },
@@ -568,9 +585,12 @@ export class OrderService {
    * Uses each order's createdAt to place it in the correct monthly bucket.
    * Sorted by createdAt ascending so older orders get lower sequence numbers.
    */
-  async backfillInvoiceNumbers(): Promise<{ updated: number; skipped: number }> {
+  async backfillInvoiceNumbers(userId: string): Promise<{ updated: number; skipped: number }> {
     const orders = await this.orderModel
-      .find({ $or: [{ invoiceNumber: { $exists: false } }, { invoiceNumber: null }] })
+      .find({
+        ...userScopeFilter(userId),
+        $or: [{ invoiceNumber: { $exists: false } }, { invoiceNumber: null }],
+      })
       .sort({ createdAt: 1 })
       .select('_id createdAt')
       .lean<{ _id: unknown; createdAt: Date }[]>()
@@ -582,7 +602,7 @@ export class OrderService {
 
     const grouped = new Map<string, typeof orders>();
     for (const order of orders) {
-      const key = this.buildCounterKey(new Date(order.createdAt));
+      const key = this.buildCounterKey(userId, new Date(order.createdAt));
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(order);
     }

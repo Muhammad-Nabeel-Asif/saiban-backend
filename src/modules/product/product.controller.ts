@@ -13,6 +13,7 @@ import {
 import { ProductService } from './product.service';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './product.dto';
 import { AuthGuard } from '../../guards/jwt-auth.guard';
+import { CurrentUserId } from '../../decorators/current-user.decorator';
 import { Types } from 'mongoose';
 
 @Controller('products')
@@ -21,31 +22,31 @@ export class ProductController {
   constructor(private readonly productService: ProductService) {}
 
   @Post()
-  create(@Body() dto: CreateProductDto) {
-    return this.productService.create(dto);
+  create(@CurrentUserId() userId: string, @Body() dto: CreateProductDto) {
+    return this.productService.create(userId, dto);
   }
 
   @Get()
-  findAll(@Query() query: ProductQueryDto) {
-    return this.productService.findAll(query);
+  findAll(@CurrentUserId() userId: string, @Query() query: ProductQueryDto) {
+    return this.productService.findAll(userId, query);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     this.validateObjectId(id);
-    return this.productService.findOne(id);
+    return this.productService.findOne(userId, id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
+  update(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: UpdateProductDto) {
     this.validateObjectId(id);
-    return this.productService.update(id, dto);
+    return this.productService.update(userId, id, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  remove(@CurrentUserId() userId: string, @Param('id') id: string) {
     this.validateObjectId(id);
-    return this.productService.remove(id);
+    return this.productService.remove(userId, id);
   }
 
   private validateObjectId(id: string) {

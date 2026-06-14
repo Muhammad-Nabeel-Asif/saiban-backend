@@ -1,9 +1,12 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, InferSchemaType } from 'mongoose';
+import { Document, InferSchemaType, Types } from 'mongoose';
 
 @Schema({ timestamps: true })
 export class Product extends Document {
-  @Prop({ required: true, unique: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  userId: Types.ObjectId;
+
+  @Prop({ required: true })
   name: string;
 
   @Prop()
@@ -44,4 +47,5 @@ export class Product extends Document {
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
+ProductSchema.index({ userId: 1, name: 1 }, { unique: true });
 export type ProductDocument = InferSchemaType<typeof ProductSchema> & Document;

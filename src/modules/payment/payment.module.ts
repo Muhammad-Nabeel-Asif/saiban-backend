@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Order, OrderSchema } from '../../schemas/order.schema';
+import { Customer, CustomerSchema } from '../../schemas/customer.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../../schemas/ledgerEntry.schema';
 import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
@@ -10,6 +11,7 @@ import { Payment, PaymentSchema } from '../../schemas/payment.schema';
   imports: [
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
+      { name: Customer.name, schema: CustomerSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: Payment.name, schema: PaymentSchema },
     ]),

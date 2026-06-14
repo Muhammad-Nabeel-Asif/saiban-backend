@@ -28,6 +28,9 @@ export const OrderItemSchema = SchemaFactory.createForClass(OrderItem);
 
 @Schema({ timestamps: true })
 export class Order {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  userId: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'Customer', required: true })
   customerId: Types.ObjectId;
 
@@ -46,7 +49,7 @@ export class Order {
   @Prop({ required: true, min: 0 })
   grandTotal: number;
 
-  @Prop({ unique: true, sparse: true })
+  @Prop({ sparse: true })
   invoiceNumber?: string;
 
   @Prop()
@@ -56,6 +59,7 @@ export class Order {
 export const OrderSchema = SchemaFactory.createForClass(Order);
 
 OrderSchema.index({ status: 1, createdAt: 1 });
+OrderSchema.index({ userId: 1, invoiceNumber: 1 }, { unique: true, sparse: true });
 
 export type OrderSchemaDocument = Order & Document;
 

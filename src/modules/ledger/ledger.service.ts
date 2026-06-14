@@ -1,13 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LedgerEntry, LedgerEntryDocument } from '../../schemas/ledgerEntry.schema';
+import { Customer } from '../../schemas/customer.schema';
 import { EntryType, SourceType } from '../../schemas/schema.types';
+import { toUserObjectId, userScopeFilter } from '../../common/utils/user-scope.util';
 
 @Injectable()
 export class LedgerService {
   constructor(
     @InjectModel(LedgerEntry.name) private readonly ledgerModel: Model<LedgerEntryDocument>,
+    @InjectModel(Customer.name) private readonly customerModel: Model<Customer>,
   ) {}
 
   /**
@@ -22,17 +25,33 @@ export class LedgerService {
     return { $or: conditions };
   }
 
+  private async assertCustomerOwned(userId: string, customerId: string) {
+    const customer = await this.customerModel
+      .findOne({ _id: customerId, ...userScopeFilter(userId) })
+      .lean()
+      .exec();
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    return customer;
+  }
+
   /**
    * Aggregation stages that:
    *  1. Normalize `customerId` (string or ObjectId) into a single ObjectId field
    *  2. Drop rows whose customer cannot be cast to an ObjectId
    *  3. Drop rows whose customer no longer exists in the customers collection
+   *  4. Optionally scope to a single store owner via `userId`
    *
    * Apply these BEFORE any `$group` so per-customer totals are computed against a
    * single, canonical customer identity. Optional `extraMatch` is combined with the
    * normalized-id filter for callers that also want to scope by source/entry type.
    */
-  private buildNormalizedCustomerStages(extraMatch: Record<string, unknown> = {}) {
+  private buildNormalizedCustomerStages(userId?: string, extraMatch: Record<string, unknown> = {}) {
+    const userObjectId = userId ? toUserObjectId(userId) : null;
+
     return [
       {
         $addFields: {
@@ -67,14 +86,19 @@ export class LedgerService {
         },
       },
       { $match: { customerMatch: { $ne: [] } } },
+      ...(userObjectId
+        ? [{ $match: { 'customerMatch.userId': userObjectId } }]
+        : []),
     ];
   }
 
-  async getCustomerBalance(customerId: string): Promise<{
+  async getCustomerBalance(userId: string, customerId: string): Promise<{
     netBalance: number;
     direction: 'customer_owes' | 'we_owe_customer' | 'settled';
     absoluteAmount: number;
   }> {
+    await this.assertCustomerOwned(userId, customerId);
+
     const result = await this.ledgerModel.aggregate([
       {
         $match: this.buildCustomerIdMatch(customerId),
@@ -123,6 +147,7 @@ export class LedgerService {
   }
 
   async getCustomerBalanceAsOf(
+    userId: string,
     customerId: string,
     asOf: Date,
   ): Promise<{
@@ -130,6 +155,8 @@ export class LedgerService {
     direction: 'customer_owes' | 'we_owe_customer' | 'settled';
     absoluteAmount: number;
   }> {
+    await this.assertCustomerOwned(userId, customerId);
+
     const result = await this.ledgerModel.aggregate([
       {
         $match: {
@@ -181,12 +208,15 @@ export class LedgerService {
   }
 
   async getCustomerLedgerEntries(
+    userId: string,
     customerId: string,
     page: number = 1,
     limit: number = 10,
     startDate?: Date,
     endDate?: Date,
   ) {
+    await this.assertCustomerOwned(userId, customerId);
+
     const skip = (page - 1) * limit;
     const filter: any = { customerId: customerId };
 
@@ -264,6 +294,7 @@ export class LedgerService {
   }
 
   async getAllLedgerEntries(
+    userId: string,
     page: number = 1,
     limit: number = 10,
     customerId?: string,
@@ -274,6 +305,7 @@ export class LedgerService {
     const filter: any = {};
 
     if (customerId) {
+      await this.assertCustomerOwned(userId, customerId);
       Object.assign(filter, this.buildCustomerIdMatch(customerId));
     }
 
@@ -293,7 +325,7 @@ export class LedgerService {
       }
     }
 
-    const validCustomerPipeline = this.buildNormalizedCustomerStages();
+    const validCustomerPipeline = this.buildNormalizedCustomerStages(userId);
 
     const [validPageEntryIds, validTotalResult] = await Promise.all([
       this.ledgerModel
@@ -338,13 +370,14 @@ export class LedgerService {
     };
   }
 
-  async getDateRangeReport(startDate: Date, endDate: Date) {
+  async getDateRangeReport(userId: string, startDate: Date, endDate: Date) {
     const report = await this.ledgerModel.aggregate([
       {
         $match: {
           createdAt: { $gte: startDate, $lte: endDate },
         },
       },
+      ...this.buildNormalizedCustomerStages(userId),
       {
         $group: {
           _id: {
@@ -388,9 +421,9 @@ export class LedgerService {
    *  - rows belong to a real customer
    *  - rows tied to deleted/orphaned customers are excluded
    */
-  async getDashboardPaymentSummary() {
+  async getDashboardPaymentSummary(userId: string) {
     const paymentSummary = await this.ledgerModel.aggregate([
-      ...this.buildNormalizedCustomerStages({ sourceType: SourceType.PAYMENT }),
+      ...this.buildNormalizedCustomerStages(userId, { sourceType: SourceType.PAYMENT }),
       {
         $group: {
           _id: null,
@@ -427,9 +460,9 @@ export class LedgerService {
    * Total outstanding from customers (sum of positive balances).
    * Groups by normalized customerId so string/ObjectId duplicates are not double-counted.
    */
-  async getTotalPendingReceivables(): Promise<number> {
+  async getTotalPendingReceivables(userId: string): Promise<number> {
     const result = await this.ledgerModel.aggregate([
-      ...this.buildNormalizedCustomerStages(),
+      ...this.buildNormalizedCustomerStages(userId),
       {
         $group: {
           _id: '$normalizedCustomerId',
@@ -462,8 +495,9 @@ export class LedgerService {
     return result.length ? result[0].totalPending : 0;
   }
 
-  async getLedgerSummary() {
+  async getLedgerSummary(userId: string) {
     const summary = await this.ledgerModel.aggregate([
+      ...this.buildNormalizedCustomerStages(userId),
       {
         $group: {
           _id: null,

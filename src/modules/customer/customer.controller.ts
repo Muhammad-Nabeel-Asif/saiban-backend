@@ -18,6 +18,7 @@ import {
 } from './customer.dto';
 import { CustomerService } from './customer.service';
 import { AuthGuard } from '../../guards/jwt-auth.guard';
+import { CurrentUserId } from '../../decorators/current-user.decorator';
 import { Types } from 'mongoose';
 import { LedgerService } from '../ledger/ledger.service';
 
@@ -30,55 +31,55 @@ export class CustomerController {
   ) {}
 
   @Post()
-  create(@Body() dto: CreateCustomerDto) {
-    return this.customerService.create(dto);
+  create(@CurrentUserId() userId: string, @Body() dto: CreateCustomerDto) {
+    return this.customerService.create(userId, dto);
   }
 
   @Get()
-  findAll(@Query() query: CustomerQueryDto) {
-    return this.customerService.findAll(query);
+  findAll(@CurrentUserId() userId: string, @Query() query: CustomerQueryDto) {
+    return this.customerService.findAll(userId, query);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     this.validateObjectId(id);
-    return this.customerService.findOne(id);
+    return this.customerService.findOne(userId, id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
+  update(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: UpdateCustomerDto) {
     this.validateObjectId(id);
-    return this.customerService.update(id, dto);
+    return this.customerService.update(userId, id, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  remove(@CurrentUserId() userId: string, @Param('id') id: string) {
     this.validateObjectId(id);
-    return this.customerService.remove(id);
+    return this.customerService.remove(userId, id);
   }
 
   @Post(':id/balance-adjustments')
-  adjustBalance(@Param('id') id: string, @Body() dto: BalanceAdjustmentDto) {
+  adjustBalance(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: BalanceAdjustmentDto) {
     this.validateObjectId(id);
-    return this.customerService.adjustBalance(id, dto);
+    return this.customerService.adjustBalance(userId, id, dto);
   }
 
   @Get(':id/orders')
-  getOrders(@Param('id') id: string, @Query() query: CustomerQueryDto) {
+  getOrders(@CurrentUserId() userId: string, @Param('id') id: string, @Query() query: CustomerQueryDto) {
     this.validateObjectId(id);
-    return this.customerService.getOrderHistory(id, query.page, query.limit);
+    return this.customerService.getOrderHistory(userId, id, query.page, query.limit);
   }
 
   @Get(':id/transactions')
-  getTransactions(@Param('id') id: string, @Query() query: CustomerQueryDto) {
+  getTransactions(@CurrentUserId() userId: string, @Param('id') id: string, @Query() query: CustomerQueryDto) {
     this.validateObjectId(id);
-    return this.customerService.getTransactionHistory(id, query.page, query.limit);
+    return this.customerService.getTransactionHistory(userId, id, query.page, query.limit);
   }
 
   @Get(':id/balance')
-  async getBalance(@Param('id') id: string) {
+  async getBalance(@CurrentUserId() userId: string, @Param('id') id: string) {
     this.validateObjectId(id);
-    const balance = await this.ledgerService.getCustomerBalance(id);
+    const balance = await this.ledgerService.getCustomerBalance(userId, id);
     return { customerId: id, balance };
   }
 

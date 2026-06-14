@@ -24,6 +24,7 @@ import {
   CustomerBalanceAdjustmentDocument,
 } from '../../schemas/customerBalanceAdjustment.schema';
 import { roundMoney } from '../../common/utils/money.util';
+import { userScopeFilter } from '../../common/utils/user-scope.util';
 
 /** Case-insensitive alphabetical sort for customer names (MongoDB collation). */
 const NAME_SORT_COLLATION = { locale: 'en', strength: 2 } as const;
@@ -107,13 +108,26 @@ export class CustomerService {
     return adjustment.toObject();
   }
 
-  async create(dto: CreateCustomerDto) {
+  private async assertCustomerOwned(userId: string, customerId: string) {
+    const customer = await this.customerModel
+      .findOne({ _id: customerId, ...userScopeFilter(userId) })
+      .lean()
+      .exec();
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    return customer;
+  }
+
+  async create(userId: string, dto: CreateCustomerDto) {
     const { balanceAdjustment, ...customerData } = dto;
     const session = await this.customerModel.db.startSession();
     session.startTransaction();
 
     try {
-      const customer = new this.customerModel(customerData);
+      const customer = new this.customerModel({ ...customerData, ...userScopeFilter(userId) });
       await customer.save({ session });
 
       if (balanceAdjustment) {
@@ -131,9 +145,9 @@ export class CustomerService {
     }
   }
 
-  async findAll(query: CustomerQueryDto) {
+  async findAll(userId: string, query: CustomerQueryDto) {
     const { pageNum, limitNum, skip } = this.getPagination(query.page, query.limit);
-    const filter = this.buildSearchFilter(query.search);
+    const filter = { ...userScopeFilter(userId), ...this.buildSearchFilter(query.search) };
     const sortRecent = query.sort === CustomerSort.Recent;
 
     let listQuery = this.customerModel.find(filter);
@@ -159,15 +173,11 @@ export class CustomerService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(userId: string, id: string) {
     const [customer, balance] = await Promise.all([
-      this.customerModel.findById(id).lean().exec(),
-      this.ledgerService.getCustomerBalance(id),
+      this.assertCustomerOwned(userId, id),
+      this.ledgerService.getCustomerBalance(userId, id),
     ]);
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
 
     return {
       ...customer,
@@ -175,9 +185,9 @@ export class CustomerService {
     };
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(userId: string, id: string, dto: UpdateCustomerDto) {
     const customer = await this.customerModel
-      .findByIdAndUpdate(id, dto, { returnDocument: 'after' })
+      .findOneAndUpdate({ _id: id, ...userScopeFilter(userId) }, dto, { returnDocument: 'after' })
       .lean()
       .exec();
 
@@ -188,9 +198,8 @@ export class CustomerService {
     return customer;
   }
 
-  async remove(id: string) {
-    // Check if customer exists
-    const customer = await this.customerModel.findById(id).exec();
+  async remove(userId: string, id: string) {
+    const customer = await this.customerModel.findOne({ _id: id, ...userScopeFilter(userId) }).exec();
     if (!customer) {
       throw new NotFoundException('Customer not found');
     }
@@ -209,23 +218,19 @@ export class CustomerService {
     return { message: 'Customer and all related records deleted successfully' };
   }
 
-  async adjustBalance(customerId: string, dto: BalanceAdjustmentDto) {
+  async adjustBalance(userId: string, customerId: string, dto: BalanceAdjustmentDto) {
     const session = await this.customerModel.db.startSession();
     session.startTransaction();
 
     try {
-      const customer = await this.customerModel.findById(customerId).session(session).lean().exec();
-
-      if (!customer) {
-        throw new NotFoundException('Customer not found');
-      }
+      await this.assertCustomerOwned(userId, customerId);
 
       const adjustment = await this.createBalanceAdjustment(customerId, dto, session);
 
       await session.commitTransaction();
       session.endSession();
 
-      const balance = await this.ledgerService.getCustomerBalance(customerId);
+      const balance = await this.ledgerService.getCustomerBalance(userId, customerId);
 
       return {
         message: 'Balance adjusted successfully',
@@ -241,7 +246,9 @@ export class CustomerService {
 
   /* -------------------- history -------------------- */
 
-  async getOrderHistory(customerId: string, page?: number, limit?: number) {
+  async getOrderHistory(userId: string, customerId: string, page?: number, limit?: number) {
+    await this.assertCustomerOwned(userId, customerId);
+
     const { pageNum, limitNum, skip } = this.getPagination(page, limit);
     const customerFilter = this.buildCustomerIdFilter(customerId);
 
@@ -269,7 +276,9 @@ export class CustomerService {
     };
   }
 
-  async getTransactionHistory(customerId: string, page?: number, limit?: number) {
+  async getTransactionHistory(userId: string, customerId: string, page?: number, limit?: number) {
+    await this.assertCustomerOwned(userId, customerId);
+
     const { pageNum, limitNum, skip } = this.getPagination(page, limit);
     const customerFilter = this.buildCustomerIdFilter(customerId);
 

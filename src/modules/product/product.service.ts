@@ -5,6 +5,7 @@ import { Product } from '../../schemas/product.schema';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './product.dto';
 import { StockMovement } from '../../schemas/stockMovement.schema';
 import { roundMoney } from '../../common/utils/money.util';
+import { userScopeFilter } from '../../common/utils/user-scope.util';
 
 const PRODUCT_NEWLY_INCLUDED_FIELDS = ['batchNo', 'expiry', 'mfg'] as const;
 
@@ -43,16 +44,16 @@ export class ProductService {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  async create(dto: CreateProductDto) {
-    const payload = { ...dto, unitPrice: roundMoney(dto.unitPrice) };
+  async create(userId: string, dto: CreateProductDto) {
+    const payload = { ...dto, unitPrice: roundMoney(dto.unitPrice), ...userScopeFilter(userId) };
     const created = await this.productModel.create(payload);
     return this.withProductNewFields(created.toObject());
   }
 
-  async findAll(query: ProductQueryDto) {
+  async findAll(userId: string, query: ProductQueryDto) {
     const { pageNum, limitNum, skip } = this.getPagination(query.page, query.limit);
 
-    const filter: any = {};
+    const filter: any = { ...userScopeFilter(userId) };
 
     if (query.search) {
       filter.name = {
@@ -111,22 +112,25 @@ export class ProductService {
     };
   }
 
-  async findOne(id: string) {
-    const product = await this.productModel.findById(id).lean().exec();
+  async findOne(userId: string, id: string) {
+    const product = await this.productModel
+      .findOne({ _id: id, ...userScopeFilter(userId) })
+      .lean()
+      .exec();
     if (!product) {
       throw new NotFoundException('Product not found');
     }
     return this.withProductNewFields(product);
   }
 
-  async update(id: string, dto: UpdateProductDto) {
+  async update(userId: string, id: string, dto: UpdateProductDto) {
     const payload = { ...dto } as UpdateProductDto;
     if (payload.unitPrice !== undefined) {
       payload.unitPrice = roundMoney(payload.unitPrice);
     }
 
     const product = await this.productModel
-      .findByIdAndUpdate(id, payload, { returnDocument: 'after' })
+      .findOneAndUpdate({ _id: id, ...userScopeFilter(userId) }, payload, { returnDocument: 'after' })
       .lean()
       .exec();
 
@@ -137,8 +141,8 @@ export class ProductService {
     return this.withProductNewFields(product);
   }
 
-  async remove(id: string) {
-    const product = await this.productModel.findByIdAndDelete(id).exec();
+  async remove(userId: string, id: string) {
+    const product = await this.productModel.findOneAndDelete({ _id: id, ...userScopeFilter(userId) }).exec();
     if (!product) {
       throw new NotFoundException('Product not found');
     }
@@ -146,6 +150,7 @@ export class ProductService {
   }
 
   async adjustStock(
+    userId: string,
     productId: string,
     quantityChange: number,
     reason: 'order' | 'adjustment' | 'return',
@@ -159,7 +164,9 @@ export class ProductService {
     try {
       session.startTransaction();
 
-      const product = await this.productModel.findById(productId).session(session);
+      const product = await this.productModel
+        .findOne({ _id: productId, ...userScopeFilter(userId) })
+        .session(session);
       if (!product) throw new NotFoundException('Product not found');
 
       const newStock = (product.quantityInStock || 0) + quantityChange;
@@ -197,8 +204,16 @@ export class ProductService {
     }
   }
 
-  async getAllStock(): Promise<{ productId: string; stock: number }[]> {
+  async getAllStock(userId: string): Promise<{ productId: string; stock: number }[]> {
+    const userProducts = await this.productModel.find(userScopeFilter(userId)).select('_id').lean().exec();
+    const productIds = userProducts.map((p) => p._id);
+
+    if (productIds.length === 0) {
+      return [];
+    }
+
     const result = await this.stockMovementModel.aggregate([
+      { $match: { productId: { $in: productIds } } },
       {
         $group: {
           _id: '$productId',
@@ -211,7 +226,12 @@ export class ProductService {
     return result;
   }
 
-  async getProductStock(productId: string): Promise<number> {
+  async getProductStock(userId: string, productId: string): Promise<number> {
+    const product = await this.productModel.findOne({ _id: productId, ...userScopeFilter(userId) }).lean().exec();
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
     const result = await this.stockMovementModel.aggregate([
       { $match: { productId: new Types.ObjectId(productId) } },
       { $group: { _id: null, stock: { $sum: '$quantityChange' } } },
