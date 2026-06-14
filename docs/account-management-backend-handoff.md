@@ -15,7 +15,7 @@ Browser → Next.js BFF (/api/auth/*) → Backend API ({API_URL}/api/auth/*)
 | Flow type | Routes | Auth |
 |-----------|--------|------|
 | Public | `forgot-password`, `reset-password`, `login`, `register` | None |
-| Authenticated | `change-password`, `profile` | `Authorization: Bearer <jwt>` |
+| Authenticated | `change-password`, `profile`, `me` | `Authorization: Bearer <jwt>` |
 
 Global API prefix: **`/api`** (all paths below are relative to that).
 
@@ -29,13 +29,14 @@ Global API prefix: **`/api`** (all paths below are relative to that).
 | `POST` | `/api/auth/reset-password` | Yes → `/api/auth/reset-password` |
 | `POST` | `/api/auth/change-password` | Yes → `/api/auth/change-password` |
 | `PATCH` | `/api/auth/profile` | Yes → `/api/auth/profile` |
+| `GET` | `/api/auth/me` | Yes → `/api/auth/me` |
 | `POST` | `/api/auth/login` | Already integrated |
 | `POST` | `/api/auth/register` | Already integrated |
 
 **Not implemented (optional / future):**
 
-- `GET /api/auth/me` — user hydration on hard refresh
 - Email change flow — email is read-only by design for this phase
+- `POST /api/auth/logout` — server-side JWT invalidation (cookie-only logout via BFF is sufficient)
 
 ---
 
@@ -129,7 +130,10 @@ Authorization: Bearer <access_token>
 
 **Success `200`**
 ```json
-{ "message": "Password updated successfully" }
+{
+  "message": "Password updated successfully",
+  "access_token": "<new-jwt>"
+}
 ```
 
 **Errors**
@@ -143,8 +147,34 @@ Authorization: Bearer <access_token>
 
 **Behavior**
 
-- Current session JWT **remains valid** after change — no re-login required
-- Other sessions/devices are **not** invalidated
+- Current session stays valid when the BFF **replaces the cookie** with the returned `access_token`
+- All other sessions/devices are invalidated via `tokenVersion` bump
+- Reset tokens are cleared
+
+---
+
+### `GET /api/auth/me` *(authenticated)*
+
+**Headers**
+```
+Authorization: Bearer <access_token>
+```
+
+**Success `200`**
+```json
+{
+  "user": {
+    "id": "674a1b2c3d4e5f6789012345",
+    "email": "user@example.com",
+    "name": "Jane Doe",
+    "role": "admin"
+  }
+}
+```
+
+**Errors:** `401` for missing, invalid, expired, or revoked JWT.
+
+**Notes:** `user` shape matches login/profile. Use on app load to hydrate sidebar/account state.
 
 ---
 
@@ -206,15 +236,21 @@ Unchanged. Returns:
 
 ### `POST /api/auth/register`
 
-**Note for frontend:** Register returns a **message only**, not a token:
+Returns the same shape as login:
 
 ```json
-{ "message": "User registered successfully" }
+{
+  "access_token": "<jwt>",
+  "user": {
+    "id": "<mongodb-object-id>",
+    "email": "user@example.com",
+    "name": "Jane Doe",
+    "role": "admin"
+  }
+}
 ```
 
-If the BFF currently expects `access_token` on register, keep the existing post-register login call (or update the BFF to login after register).
-
-**Validation added:** password minimum length **6**; name minimum length **2** when provided.
+**Validation:** password minimum length **6**; name minimum length **2** when provided.
 
 ---
 
@@ -262,9 +298,10 @@ Frontend validation already aligned with these rules should work without changes
 | Email enumeration (forgot-password) | Same success response regardless of account existence |
 | Reset token storage | SHA-256 hash stored; raw token only in email URL |
 | Reset token reuse | Single-use; cleared after successful reset |
+| Session invalidation | `tokenVersion` on user; JWT includes `tv` claim; bumped on password change/reset |
 | Rate limiting | Forgot-password only (429) |
-| Session invalidation on password change | No — current JWT stays valid |
-| Session invalidation on reset-password | N/A — no auto-login |
+| Session invalidation on password change | Other devices invalidated; current device gets new `access_token` in response |
+| Session invalidation on reset-password | All JWTs invalidated; no auto-login |
 
 ---
 
@@ -333,10 +370,11 @@ Backend requires these env vars for full account-management functionality:
 
 | Topic | Original spec | Actual backend |
 |-------|---------------|----------------|
-| Register response | Token + user (same as login) | `{ message }` only — login separately |
 | Reset 404 vs 400 | Optional 404 for missing token | Always `400` with generic message |
-| Session invalidation | Open question | Not implemented — JWTs remain valid |
-| `GET /api/auth/me` | Optional future | Not implemented |
+| `GET /api/auth/me` | Optional future | **Implemented** |
+| Register response | Token + user | **Token + user** (same as login) |
+| Session invalidation | Open question | Implemented via `tokenVersion`; change-password returns new token |
+| `POST /api/auth/logout` | Optional | Not implemented |
 
 ---
 
@@ -358,9 +396,8 @@ Backend requires these env vars for full account-management functionality:
 
 Contact backend if you need:
 
-1. **`GET /api/auth/me`** for hard-refresh user hydration
-2. **Register returning token** (auto-login after signup)
-3. **Global session invalidation** after password change/reset
-4. **Stricter password policy** (would require frontend validation updates)
+1. **`POST /api/auth/logout`** with server-side JWT invalidation
+2. **Stricter password policy** (would require frontend validation updates)
+3. **Refresh tokens**
 
-Otherwise, existing BFF routes and UI should integrate without structural changes once `API_URL` and backend env are configured per environment.
+**Frontend handback:** See [`account-management-frontend-handback.md`](./account-management-frontend-handback.md) for integration notes on the latest changes.
