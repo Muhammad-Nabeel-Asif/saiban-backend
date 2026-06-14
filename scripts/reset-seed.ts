@@ -2,26 +2,33 @@
 /**
  * reset-seed.ts
  *
- * Clears business data (products, customers, orders, payments, ledger) from
- * the local MongoDB database and re-seeds realistic Pakistani pharmacy data
- * using the same NestJS services as the API — preserving stock, ledger, and
- * invoice invariants.
+ * Clears one store owner's business data (products, customers, orders,
+ * payments, ledger, stock movements, invoice counters) and re-seeds realistic
+ * Pakistani pharmacy data using the same NestJS services as the API —
+ * preserving stock, ledger, and invoice invariants.
  *
  * Usage:
- *   npm run db:reset-seed              # reset + seed (default)
- *   npm run db:reset-seed -- --reset-only
- *   npm run db:reset-seed -- --seed-only
+ *   npm run db:reset-seed -- --email you@example.com
+ *   npm run db:reset-seed -- --user-id 507f1f77bcf86cd799439011
+ *   npm run db:reset-seed -- --email you@example.com --reset-only
+ *   npm run db:reset-seed -- --email you@example.com --seed-only
  *   npm run db:reset-seed -- --force     # bypass localhost URI check
+ *
+ * Target user (required when multiple accounts exist):
+ *   --email <address>   or SEED_USER_EMAIL in .env
+ *   --user-id <mongoId> or SEED_USER_ID in .env
+ *   If exactly one user exists, that account is used automatically.
  *
  * Safety:
  *   - Refuses NODE_ENV=production
  *   - Requires MONGODB_URI to target localhost / 127.0.0.1 (unless --force)
- *   - Does NOT delete users (auth accounts are preserved)
+ *   - Does NOT delete auth accounts; only the chosen user's business data
+ *   - Other users' products, customers, and orders are left untouched
  */
 
 import 'reflect-metadata';
 import { config } from 'dotenv';
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module';
 import { ProductService } from '../src/modules/product/product.service';
@@ -39,21 +46,24 @@ import {
 
 config();
 
-const COLLECTIONS_TO_CLEAR = [
-  'ledgerentries',
-  'payments',
-  'customerbalanceadjustments',
-  'stockmovements',
-  'orders',
-  'counters',
-  'customers',
-  'products',
-] as const;
-
 const args = new Set(process.argv.slice(2));
 const RESET_ONLY = args.has('--reset-only');
 const SEED_ONLY = args.has('--seed-only');
 const FORCE = args.has('--force');
+
+type TargetUser = { id: string; email: string };
+
+function getArgValue(flag: string): string | undefined {
+  const argv = process.argv.slice(2);
+  const index = argv.indexOf(flag);
+  if (index === -1 || index + 1 >= argv.length) {
+    return undefined;
+  }
+  return argv[index + 1];
+}
+
+const CLI_USER_EMAIL = getArgValue('--email');
+const CLI_USER_ID = getArgValue('--user-id');
 
 function fail(msg: string): never {
   console.error(`\n[x] ${msg}\n`);
@@ -87,47 +97,137 @@ function parseDbName(uri: string): string {
   return parsed.pathname.replace(/^\//, '') || 'test';
 }
 
-async function resetCollections(): Promise<void> {
+async function ensureConnected(): Promise<void> {
   const uri = process.env.MONGODB_URI!;
-  await mongoose.connect(uri);
+  if (mongoose.connection.readyState === 0) {
+    await mongoose.connect(uri);
+  }
+}
+
+async function resolveTargetUser(): Promise<TargetUser> {
+  await ensureConnected();
+
+  const users = mongoose.connection.db!.collection('users');
+  const email = CLI_USER_EMAIL ?? process.env.SEED_USER_EMAIL;
+  const userId = CLI_USER_ID ?? process.env.SEED_USER_ID;
+
+  if (email && userId) {
+    fail('Use only one of --email / SEED_USER_EMAIL or --user-id / SEED_USER_ID');
+  }
+
+  if (email) {
+    const user = await users.findOne({ email: email.toLowerCase().trim() });
+    if (!user?._id) {
+      fail(`No user found with email "${email}". Register or log in first.`);
+    }
+    return { id: String(user._id), email: String(user.email) };
+  }
+
+  if (userId) {
+    if (!Types.ObjectId.isValid(userId)) {
+      fail(`Invalid user id "${userId}"`);
+    }
+    const user = await users.findOne({ _id: new Types.ObjectId(userId) });
+    if (!user?._id) {
+      fail(`No user found with id "${userId}"`);
+    }
+    return { id: String(user._id), email: String(user.email) };
+  }
+
+  const allUsers = await users.find({}).sort({ createdAt: 1 }).toArray();
+  if (allUsers.length === 0) {
+    fail('No users found. Register an account first, then run db:reset-seed.');
+  }
+  if (allUsers.length > 1) {
+    fail(
+      'Multiple users found. Pass --email <your-login-email> (or set SEED_USER_EMAIL) ' +
+        'so data is reset and seeded for the account you use in the app.',
+    );
+  }
+
+  const user = allUsers[0];
+  return { id: String(user._id), email: String(user.email) };
+}
+
+async function resetUserData(userId: string, userEmail: string): Promise<void> {
+  await ensureConnected();
+
   const db = mongoose.connection.db!;
-  const dbName = parseDbName(uri);
+  const dbName = parseDbName(process.env.MONGODB_URI!);
+  const userObjectId = new Types.ObjectId(userId);
 
-  console.log(`\n[~] Resetting business data in "${dbName}"...\n`);
+  console.log(
+    `\n[~] Resetting business data for ${userEmail} in "${dbName}" (other users untouched)...\n`,
+  );
 
-  for (const name of COLLECTIONS_TO_CLEAR) {
-    const result = await db.collection(name).deleteMany({});
-    console.log(`    cleared ${name}: ${result.deletedCount} document(s)`);
+  const customers = db.collection('customers');
+  const products = db.collection('products');
+
+  const customerIds = (
+    await customers.find({ userId: userObjectId }, { projection: { _id: 1 } }).toArray()
+  ).map((doc) => doc._id);
+  const productIds = (
+    await products.find({ userId: userObjectId }, { projection: { _id: 1 } }).toArray()
+  ).map((doc) => doc._id);
+
+  const deletions: Array<{ label: string; result: { deletedCount?: number } }> = [];
+
+  if (customerIds.length > 0) {
+    deletions.push({
+      label: 'ledgerentries',
+      result: await db.collection('ledgerentries').deleteMany({ customerId: { $in: customerIds } }),
+    });
+    deletions.push({
+      label: 'payments',
+      result: await db.collection('payments').deleteMany({ customerId: { $in: customerIds } }),
+    });
+    deletions.push({
+      label: 'customerbalanceadjustments',
+      result: await db
+        .collection('customerbalanceadjustments')
+        .deleteMany({ customerId: { $in: customerIds } }),
+    });
+  }
+
+  if (productIds.length > 0) {
+    deletions.push({
+      label: 'stockmovements',
+      result: await db.collection('stockmovements').deleteMany({ productId: { $in: productIds } }),
+    });
+  }
+
+  deletions.push({
+    label: 'orders',
+    result: await db.collection('orders').deleteMany({ userId: userObjectId }),
+  });
+  deletions.push({
+    label: 'customers',
+    result: await customers.deleteMany({ userId: userObjectId }),
+  });
+  deletions.push({
+    label: 'products',
+    result: await products.deleteMany({ userId: userObjectId }),
+  });
+  deletions.push({
+    label: 'counters',
+    result: await db.collection('counters').deleteMany({
+      key: { $regex: `^invoice-${userId}-` },
+    }),
+  });
+
+  for (const { label, result } of deletions) {
+    console.log(`    cleared ${label}: ${result.deletedCount ?? 0} document(s)`);
   }
 
   if (!SEED_ONLY) {
     await mongoose.disconnect();
   }
 
-  console.log('\n[✓] Reset complete (users preserved)\n');
+  console.log('\n[✓] Reset complete (auth accounts preserved)\n');
 }
 
-async function resolveSeedUserId(): Promise<string> {
-  const uri = process.env.MONGODB_URI!;
-  if (mongoose.connection.readyState === 0) {
-    await mongoose.connect(uri);
-  }
-
-  const users = mongoose.connection.db!.collection('users');
-  const existing = await users.find({}).sort({ createdAt: 1 }).limit(1).next();
-
-  if (existing?._id) {
-    console.log(`[~] Seeding as user: ${existing.email} (${existing._id})\n`);
-    return String(existing._id);
-  }
-
-  fail('No users found. Register an account first, then run db:reset-seed.');
-}
-
-async function seedDatabase(): Promise<void> {
-  console.log('[~] Bootstrapping NestJS application context...\n');
-
-  const seedUserId = await resolveSeedUserId();
+async function seedDatabase(seedUserId: string, userEmail: string): Promise<void> {
+  console.log(`[~] Bootstrapping NestJS application context for ${userEmail}...\n`);
 
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'],
@@ -264,18 +364,26 @@ async function main(): Promise<void> {
     fail('Use only one of --reset-only or --seed-only');
   }
 
+  const targetUser = await resolveTargetUser();
+  console.log(`[~] Target account: ${targetUser.email} (${targetUser.id})\n`);
+
   const doReset = !SEED_ONLY;
   const doSeed = !RESET_ONLY;
 
   if (doReset) {
-    await resetCollections();
+    await resetUserData(targetUser.id, targetUser.email);
   }
 
   if (doSeed) {
     if (SEED_ONLY) {
       assertSafeToRun();
+      await ensureConnected();
     }
-    await seedDatabase();
+    await seedDatabase(targetUser.id, targetUser.email);
+  }
+
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.disconnect();
   }
 
   process.exit(0);
