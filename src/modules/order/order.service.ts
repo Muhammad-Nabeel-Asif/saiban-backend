@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Model, Types } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Order } from '../../schemas/order.schema';
 import { Product } from '../../schemas/product.schema';
 import { Customer } from '../../schemas/customer.schema';
@@ -34,101 +34,126 @@ export class OrderService {
   ) {}
 
   async create(userId: string, dto: CreateOrderDto): Promise<any> {
-    const session = await this.orderModel.db.startSession();
-    session.startTransaction();
+    // Retry on duplicate invoiceNumber: the invoice counter is incremented
+    // outside the transaction (so it always moves forward even when an attempt
+    // aborts). If a collision still occurs — e.g. the counter is behind existing
+    // orders — we regenerate the next number and retry instead of failing.
+    const MAX_ATTEMPTS = 5;
+    let lastError: unknown;
 
-    try {
-      const customer = await this.customerModel
-        .findOne({ _id: dto.customerId, ...userScopeFilter(userId) })
-        .session(session);
-      if (!customer) {
-        throw new NotFoundException('Customer not found');
-      }
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const session = await this.orderModel.db.startSession();
+      session.startTransaction();
 
-      // 1. Fetch product prices and validate stock
-      const productIds = dto.items.map((i) => i.productId);
-      const products = await this.productModel
-        .find({ _id: { $in: productIds }, ...userScopeFilter(userId) })
-        .session(session);
-
-      if (products.length !== productIds.length) {
-        throw new BadRequestException('Some products not found');
-      }
-
-      const productMap: any = new Map(products.map((p) => [p._id.toString(), p]));
-
-      // 2. Validate sufficient stock and deduct immediately
-      for (const item of dto.items) {
-        const product = productMap.get(item.productId);
-        if (product.quantityInStock < item.quantity) {
-          throw new BadRequestException(
-            `Insufficient stock for product: ${product.name}. Available: ${product.quantityInStock}, Requested: ${item.quantity}`,
-          );
+      try {
+        const customer = await this.customerModel
+          .findOne({ _id: dto.customerId, ...userScopeFilter(userId) })
+          .session(session);
+        if (!customer) {
+          throw new NotFoundException('Customer not found');
         }
 
-        // Deduct stock immediately
-        product.quantityInStock -= item.quantity;
-        await product.save({ session });
+        // 1. Fetch product prices and validate stock
+        const productIds = dto.items.map((i) => i.productId);
+        const products = await this.productModel
+          .find({ _id: { $in: productIds }, ...userScopeFilter(userId) })
+          .session(session);
+
+        if (products.length !== productIds.length) {
+          throw new BadRequestException('Some products not found');
+        }
+
+        const productMap: any = new Map(products.map((p) => [p._id.toString(), p]));
+
+        // 2. Validate sufficient stock and deduct immediately
+        for (const item of dto.items) {
+          const product = productMap.get(item.productId);
+          if (product.quantityInStock < item.quantity) {
+            throw new BadRequestException(
+              `Insufficient stock for product: ${product.name}. Available: ${product.quantityInStock}, Requested: ${item.quantity}`,
+            );
+          }
+
+          // Deduct stock immediately
+          product.quantityInStock -= item.quantity;
+          await product.save({ session });
+        }
+
+        // 3. Build Order Items (server-authoritative pricing)
+        const items = dto.items.map((item) => {
+          const product = productMap.get(item.productId);
+          return {
+            productId: product._id,
+            quantity: item.quantity,
+            unitPrice: product.unitPrice,
+            discountPercentage: item.discountPercentage ?? 0,
+            discountAmount: 0, // schema pre-hook will calculate
+            lineTotal: 0, // schema pre-hook will calculate
+          };
+        });
+
+        // 4. Create order with PENDING status
+        const invoiceNumber = await this.generateInvoiceNumber(userId);
+
+        const order = new this.orderModel({
+          userId: toUserObjectId(userId),
+          customerId: dto.customerId,
+          status: OrderStatus.PENDING,
+          items,
+          note: dto.note,
+          invoiceNumber,
+        });
+
+        await order.save({ session });
+
+        // 5. Create stock movement records
+        const stockMovements = items.map((item) => ({
+          productId: item.productId,
+          quantityChange: -item.quantity,
+          reason: StockMovementReason.ORDER,
+          referenceId: order._id,
+        }));
+
+        await this.stockMovementModel.insertMany(stockMovements, { session });
+
+        // 6. Create Ledger Entry (DEBIT) - customer owes this amount
+        const ledgerEntry = new this.ledgerEntryModel({
+          customerId: dto.customerId,
+          entryType: EntryType.DEBIT,
+          amount: order.grandTotal,
+          sourceType: SourceType.ORDER,
+          sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ORDER],
+          sourceId: order._id,
+          note: dto.note ?? null,
+        });
+
+        await ledgerEntry.save({ session });
+
+        await session.commitTransaction();
+        await session.endSession();
+        return order;
+      } catch (err) {
+        await session.abortTransaction();
+        await session.endSession();
+
+        if (this.isDuplicateInvoiceError(err) && attempt < MAX_ATTEMPTS - 1) {
+          lastError = err;
+          continue;
+        }
+        throw err;
       }
-
-      // 3. Build Order Items (server-authoritative pricing)
-      const items = dto.items.map((item) => {
-        const product = productMap.get(item.productId);
-        return {
-          productId: product._id,
-          quantity: item.quantity,
-          unitPrice: product.unitPrice,
-          discountPercentage: item.discountPercentage ?? 0,
-          discountAmount: 0, // schema pre-hook will calculate
-          lineTotal: 0, // schema pre-hook will calculate
-        };
-      });
-
-      // 4. Create order with PENDING status
-      const invoiceNumber = await this.generateInvoiceNumber(userId, session);
-
-      const order = new this.orderModel({
-        userId: toUserObjectId(userId),
-        customerId: dto.customerId,
-        status: OrderStatus.PENDING,
-        items,
-        note: dto.note,
-        invoiceNumber,
-      });
-
-      await order.save({ session });
-
-      // 5. Create stock movement records
-      const stockMovements = items.map((item) => ({
-        productId: item.productId,
-        quantityChange: -item.quantity,
-        reason: StockMovementReason.ORDER,
-        referenceId: order._id,
-      }));
-
-      await this.stockMovementModel.insertMany(stockMovements, { session });
-
-      // 6. Create Ledger Entry (DEBIT) - customer owes this amount
-      const ledgerEntry = new this.ledgerEntryModel({
-        customerId: dto.customerId,
-        entryType: EntryType.DEBIT,
-        amount: order.grandTotal,
-        sourceType: SourceType.ORDER,
-        sourceModel: SOURCE_TYPE_MODEL_MAP[SourceType.ORDER],
-        sourceId: order._id,
-        note: dto.note ?? null,
-      });
-
-      await ledgerEntry.save({ session });
-
-      await session.commitTransaction();
-      await session.endSession();
-      return order;
-    } catch (err) {
-      await session.abortTransaction();
-      await session.endSession();
-      throw err;
     }
+
+    throw lastError;
+  }
+
+  /**
+   * Detects a MongoDB duplicate-key (E11000) error on the
+   * userId_1_invoiceNumber_1 unique index.
+   */
+  private isDuplicateInvoiceError(err: unknown): boolean {
+    const e = err as { code?: number; keyPattern?: Record<string, unknown> };
+    return e?.code === 11000 && !!e?.keyPattern && 'invoiceNumber' in e.keyPattern;
   }
 
   async findAll(userId: string, query: OrderQueryDto) {
@@ -568,13 +593,21 @@ export class OrderService {
     return `INV-${yyMm}-${String(seq).padStart(4, '0')}`;
   }
 
-  private async generateInvoiceNumber(userId: string, session: ClientSession): Promise<string> {
+  /**
+   * Atomically reserves the next invoice sequence for the current month.
+   *
+   * IMPORTANT: this intentionally runs OUTSIDE the order transaction. A counter
+   * must always move forward; if the increment were part of the transaction, an
+   * aborted order would roll the counter back and the next attempt would keep
+   * regenerating the same colliding invoice number forever.
+   */
+  private async generateInvoiceNumber(userId: string): Promise<string> {
     const key = this.buildCounterKey(userId, new Date());
 
     const counter = await this.counterModel.findOneAndUpdate(
       { key },
       { $inc: { seq: 1 } },
-      { returnDocument: 'after', upsert: true, session },
+      { returnDocument: 'after', upsert: true },
     );
 
     return this.buildInvoiceString(key, counter.seq);
