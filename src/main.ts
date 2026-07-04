@@ -37,8 +37,12 @@ async function bootstrap() {
     }),
   );
 
-  // Use AllExceptionsFilter first for comprehensive error handling
-  app.useGlobalFilters(new AllExceptionsFilter(), new MongoExceptionFilter());
+  // Order matters: Nest picks the FIRST filter whose @Catch matches. The
+  // MongoExceptionFilter (specific to MongoServerError, e.g. E11000 duplicate
+  // key) must come before the catch-all AllExceptionsFilter, otherwise duplicate
+  // key errors would be swallowed by the catch-all and returned as 500 instead
+  // of 409.
+  app.useGlobalFilters(new MongoExceptionFilter(), new AllExceptionsFilter());
 
   // Add logging interceptor
   app.useGlobalInterceptors(new LoggingInterceptor(), new MonetaryPrecisionInterceptor());
