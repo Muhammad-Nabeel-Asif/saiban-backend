@@ -20,7 +20,9 @@
     "stop:staging": "pm2 stop saiban-staging",
     "status": "pm2 status",
     "sync:db": "node scripts/sync-db.js",
-    "db:reset-seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts"
+    "db:reset-seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts",
+    "products:export-costs": "ts-node -r tsconfig-paths/register scripts/backfill-purchase-price.ts export",
+    "products:import-costs": "ts-node -r tsconfig-paths/register scripts/backfill-purchase-price.ts import"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
