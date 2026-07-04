@@ -31,6 +31,15 @@ const NAME_SORT_COLLATION = { locale: 'en', strength: 2 } as const;
 
 @Injectable()
 export class CustomerService {
+  /**
+   * Max gap between a customer's createdAt and its opening-balance adjustment's
+   * createdAt. The opening balance is written in the same transaction as the
+   * customer (POST /api/customers), so their timestamps are effectively equal.
+   * Anything created later is a manual balance adjustment and must NOT be
+   * surfaced as the opening-balance note.
+   */
+  private static readonly OPENING_BALANCE_WINDOW_MS = 5000;
+
   constructor(
     @InjectModel(Customer.name) private readonly customerModel: Model<Customer>,
     @InjectModel(Order.name) private readonly orderModel: Model<Order>,
@@ -174,15 +183,58 @@ export class CustomerService {
   }
 
   async findOne(userId: string, id: string) {
-    const [customer, balance] = await Promise.all([
+    const [customer, balance, earliestAdjustment] = await Promise.all([
       this.assertCustomerOwned(userId, id),
       this.ledgerService.getCustomerBalance(userId, id),
+      this.findEarliestAdjustment(id),
     ]);
 
     return {
       ...customer,
       balance,
+      openingBalanceNote: this.resolveOpeningBalanceNote(customer, earliestAdjustment),
     };
+  }
+
+  /** Earliest balance adjustment for a customer (the opening balance, if any). */
+  private async findEarliestAdjustment(customerId: string) {
+    return this.customerBalanceAdjustmentModel
+      .findOne(this.buildCustomerIdFilter(customerId))
+      .sort({ createdAt: 1, _id: 1 })
+      .select('note createdAt')
+      .lean()
+      .exec();
+  }
+
+  /**
+   * Read-only opening-balance note surfaced on the customer detail page. Returns
+   * the note of the adjustment created at signup (POST /api/customers), or null
+   * when no opening balance was set. Later manual adjustments are excluded via
+   * the creation-time window so they can never masquerade as the opening balance.
+   */
+  private resolveOpeningBalanceNote(
+    customer: { createdAt?: Date | string },
+    earliestAdjustment: { note?: string | null; createdAt?: Date | string } | null,
+  ): string | null {
+    if (!earliestAdjustment) {
+      return null;
+    }
+
+    const customerCreatedAt = customer?.createdAt ? new Date(customer.createdAt).getTime() : null;
+    const adjustmentCreatedAt = earliestAdjustment.createdAt
+      ? new Date(earliestAdjustment.createdAt).getTime()
+      : null;
+
+    if (
+      customerCreatedAt !== null &&
+      adjustmentCreatedAt !== null &&
+      adjustmentCreatedAt - customerCreatedAt > CustomerService.OPENING_BALANCE_WINDOW_MS
+    ) {
+      return null;
+    }
+
+    const note = typeof earliestAdjustment.note === 'string' ? earliestAdjustment.note.trim() : '';
+    return note.length > 0 ? note : null;
   }
 
   async update(userId: string, id: string, dto: UpdateCustomerDto) {
