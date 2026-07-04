@@ -29,6 +29,11 @@ export class ProductService {
         out[key] = '';
       }
     }
+    // Always expose purchasePrice; default to 0 for products created before the
+    // cost-tracking migration so reads never omit the field.
+    if (out.purchasePrice === undefined || out.purchasePrice === null) {
+      out.purchasePrice = 0;
+    }
     return out;
   }
 
@@ -45,7 +50,12 @@ export class ProductService {
   }
 
   async create(userId: string, dto: CreateProductDto) {
-    const payload = { ...dto, unitPrice: roundMoney(dto.unitPrice), ...userScopeFilter(userId) };
+    const payload = {
+      ...dto,
+      unitPrice: roundMoney(dto.unitPrice),
+      purchasePrice: roundMoney(dto.purchasePrice),
+      ...userScopeFilter(userId),
+    };
     const created = await this.productModel.create(payload);
     return this.withProductNewFields(created.toObject());
   }
@@ -127,6 +137,9 @@ export class ProductService {
     const payload = { ...dto } as UpdateProductDto;
     if (payload.unitPrice !== undefined) {
       payload.unitPrice = roundMoney(payload.unitPrice);
+    }
+    if (payload.purchasePrice !== undefined) {
+      payload.purchasePrice = roundMoney(payload.purchasePrice);
     }
 
     const product = await this.productModel

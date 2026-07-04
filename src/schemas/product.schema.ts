@@ -27,6 +27,9 @@ export class Product extends Document {
   @Prop({ required: true, min: 0 })
   unitPrice: number;
 
+  @Prop({ required: true, min: 0, default: 0 })
+  purchasePrice: number;
+
   @Prop()
   gstPercent: number;
 

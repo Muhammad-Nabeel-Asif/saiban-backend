@@ -14,6 +14,9 @@ export class OrderItem {
   @Prop({ required: true, min: 0 })
   unitPrice: number;
 
+  @Prop({ min: 0, default: 0 })
+  costPrice: number;
+
   @Prop({ min: 0, max: 100, default: 0 })
   discountPercentage: number;
 
@@ -22,6 +25,9 @@ export class OrderItem {
 
   @Prop({ required: true, min: 0 })
   lineTotal: number;
+
+  @Prop({ min: 0, default: 0 })
+  lineCost: number;
 }
 
 export const OrderItemSchema = SchemaFactory.createForClass(OrderItem);
@@ -46,6 +52,12 @@ export class Order {
   @Prop({ min: 0, default: 0 })
   discountTotal: number;
 
+  @Prop({ min: 0, default: 0 })
+  costTotal: number;
+
+  @Prop({ default: 0 })
+  profitTotal: number;
+
   @Prop({ required: true, min: 0 })
   grandTotal: number;
 
@@ -66,6 +78,7 @@ export type OrderSchemaDocument = Order & Document;
 OrderSchema.pre('validate', function () {
   let subtotal = 0;
   let totalDiscount = 0;
+  let costTotal = 0;
 
   for (const item of this.items) {
     const gross = roundMoney(item.unitPrice * item.quantity);
@@ -78,12 +91,21 @@ OrderSchema.pre('validate', function () {
 
     item.lineTotal = roundMoney(Math.max(gross - discount, 0));
 
+    // Snapshot cost: lineCost = costPrice * quantity (cost is locked at order time)
+    item.lineCost = roundMoney((item.costPrice ?? 0) * item.quantity);
+    costTotal = roundMoney(costTotal + item.lineCost);
+
     subtotal = roundMoney(subtotal + item.lineTotal);
   }
 
   this.subtotal = roundMoney(subtotal);
 
   this.discountTotal = roundMoney(totalDiscount);
+
+  this.costTotal = roundMoney(costTotal);
+
+  // Profit is computed against subtotal (ex-GST, net of discount), per spec.
+  this.profitTotal = roundMoney(subtotal - costTotal);
 
   this.grandTotal = roundMoney(subtotal);
 });

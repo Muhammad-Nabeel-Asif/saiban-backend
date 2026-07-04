@@ -2,7 +2,7 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { AuthGuard } from '../../guards/jwt-auth.guard';
 import { CurrentUserId } from '../../decorators/current-user.decorator';
-import { DashboardRevenueTrendQueryDto } from './dashboard.dto';
+import { DashboardRevenueTrendQueryDto, DashboardTopProductsQueryDto } from './dashboard.dto';
 
 @Controller('dashboard')
 @UseGuards(AuthGuard)
@@ -20,5 +20,13 @@ export class DashboardController {
     @Query() query: DashboardRevenueTrendQueryDto,
   ) {
     return this.dashboardService.getRevenueTrend(userId, query);
+  }
+
+  @Get('top-products')
+  async getTopProducts(
+    @CurrentUserId() userId: string,
+    @Query() query: DashboardTopProductsQueryDto,
+  ) {
+    return this.dashboardService.getTopProducts(userId, query);
   }
 }

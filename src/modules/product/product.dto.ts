@@ -48,6 +48,11 @@ export class CreateProductDto {
   @Min(0)
   unitPrice: number;
 
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  purchasePrice: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

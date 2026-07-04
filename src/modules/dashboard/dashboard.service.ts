@@ -8,7 +8,11 @@ import { OrderStatus } from '../../schemas/schema.types';
 import { LedgerService } from '../ledger/ledger.service';
 import { roundMoney } from '../../common/utils/money.util';
 import { userScopeFilter } from '../../common/utils/user-scope.util';
-import { DashboardRevenueRange, DashboardRevenueTrendQueryDto } from './dashboard.dto';
+import {
+  DashboardRevenueRange,
+  DashboardRevenueTrendQueryDto,
+  DashboardTopProductsQueryDto,
+} from './dashboard.dto';
 
 @Injectable()
 export class DashboardService {
@@ -49,15 +53,26 @@ export class DashboardService {
       totalProducts,
       totalCustomers,
       totalOrders,
+      productsMissingPurchasePrice,
       lowStockProducts,
       pendingOrders,
       revenueResult,
+      inventoryValueResult,
       paymentSummary,
       totalPendingReceivables,
     ] = await Promise.all([
       this.productModel.countDocuments(userFilter),
       this.customerModel.countDocuments(userFilter),
       this.orderModel.countDocuments(userFilter),
+      // Products with no real cost yet (treated as "cost unknown", not a true 0).
+      this.productModel.countDocuments({
+        ...userFilter,
+        $or: [
+          { purchasePrice: { $exists: false } },
+          { purchasePrice: null },
+          { purchasePrice: { $lte: 0 } },
+        ],
+      }),
       this.productModel
         .find({
           ...userFilter,
@@ -69,15 +84,45 @@ export class DashboardService {
         .populate('customerId', 'firstName lastName')
         .limit(10)
         .sort({ createdAt: -1 }),
+      // Revenue and COGS share the same (COMPLETED) basis so grossProfit =
+      // totalRevenue - totalCost stays internally consistent.
       this.orderModel.aggregate([
         { $match: { ...userFilter, status: OrderStatus.COMPLETED } },
-        { $group: { _id: null, totalRevenue: { $sum: '$grandTotal' } } },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: '$grandTotal' },
+            totalCost: { $sum: { $ifNull: ['$costTotal', 0] } },
+          },
+        },
+      ]),
+      this.productModel.aggregate([
+        { $match: { ...userFilter } },
+        {
+          $group: {
+            _id: null,
+            inventoryValueAtCost: {
+              $sum: {
+                $multiply: [
+                  { $ifNull: ['$quantityInStock', 0] },
+                  { $ifNull: ['$purchasePrice', 0] },
+                ],
+              },
+            },
+          },
+        },
       ]),
       this.ledgerService.getDashboardPaymentSummary(userId),
       this.ledgerService.getTotalPendingReceivables(userId),
     ]);
 
     const totalRevenue = roundMoney(revenueResult.length ? revenueResult[0].totalRevenue : 0);
+    const totalCost = roundMoney(revenueResult.length ? (revenueResult[0].totalCost ?? 0) : 0);
+    const grossProfit = roundMoney(totalRevenue - totalCost);
+    const profitMargin = totalRevenue > 0 ? roundMoney((grossProfit / totalRevenue) * 100) : 0;
+    const inventoryValueAtCost = roundMoney(
+      inventoryValueResult.length ? (inventoryValueResult[0].inventoryValueAtCost ?? 0) : 0,
+    );
     const receivedPayments = roundMoney(Math.max(paymentSummary?.netReceivedPayments ?? 0, 0));
     const pendingPayments = roundMoney(totalPendingReceivables);
 
@@ -89,6 +134,11 @@ export class DashboardService {
         totalRevenue,
         pendingPayments,
         receivedPayments,
+        totalCost,
+        grossProfit,
+        profitMargin,
+        inventoryValueAtCost,
+        productsMissingPurchasePrice,
       },
       alerts: {
         lowStockProducts: lowStockProducts.map((p) => ({
@@ -160,6 +210,7 @@ export class DashboardService {
         $group: {
           _id: groupingExpression,
           revenue: { $sum: '$grandTotal' },
+          cost: { $sum: { $ifNull: ['$costTotal', 0] } },
           orderCount: { $sum: 1 },
         },
       },
@@ -168,6 +219,7 @@ export class DashboardService {
           _id: 0,
           bucketKey: '$_id',
           revenue: 1,
+          cost: 1,
           orderCount: 1,
         },
       },
@@ -180,6 +232,7 @@ export class DashboardService {
       string,
       {
         revenue: number;
+        cost: number;
         orderCount: number;
       }
     >();
@@ -187,6 +240,7 @@ export class DashboardService {
     for (const row of aggregation) {
       groupedLookup.set(row.bucketKey, {
         revenue: roundMoney(row.revenue ?? 0),
+        cost: roundMoney(row.cost ?? 0),
         orderCount: row.orderCount ?? 0,
       });
     }
@@ -205,6 +259,8 @@ export class DashboardService {
           });
 
     const totalRevenue = roundMoney(series.reduce((sum, point) => sum + point.revenue, 0));
+    const totalCost = roundMoney(series.reduce((sum, point) => sum + point.cost, 0));
+    const totalProfit = roundMoney(totalRevenue - totalCost);
     const orderCount = series.reduce((sum, point) => sum + point.orderCount, 0);
 
     return {
@@ -213,12 +269,96 @@ export class DashboardService {
       timezone,
       summary: {
         totalRevenue,
+        totalCost,
+        totalProfit,
         orderCount,
         currency: DashboardService.REVENUE_TREND_CURRENCY,
         excludedStatuses: DashboardService.EXCLUDED_STATUSES,
       },
       series,
     };
+  }
+
+  /**
+   * Most profitable products across COMPLETED orders (cancelled excluded).
+   * `metric` controls the descending sort order: profit | margin | revenue.
+   */
+  async getTopProducts(userId: string, query: DashboardTopProductsQueryDto) {
+    const userFilter = userScopeFilter(userId);
+    const metric = query.metric ?? 'profit';
+    const limit = query.limit ?? 5;
+
+    const aggregation = await this.orderModel.aggregate([
+      { $match: { ...userFilter, status: OrderStatus.COMPLETED } },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.productId',
+          unitsSold: { $sum: '$items.quantity' },
+          revenue: { $sum: { $ifNull: ['$items.lineTotal', 0] } },
+          cost: { $sum: { $ifNull: ['$items.lineCost', 0] } },
+        },
+      },
+      {
+        $lookup: {
+          from: this.productModel.collection.name,
+          localField: '_id',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      {
+        $addFields: {
+          name: { $ifNull: [{ $arrayElemAt: ['$product.name', 0] }, 'Unknown'] },
+          currentPurchasePrice: {
+            $ifNull: [{ $arrayElemAt: ['$product.purchasePrice', 0] }, 0],
+          },
+        },
+      },
+      // Exclude products whose cost hasn't been filled in yet — otherwise they
+      // would show a fabricated 100% margin and pollute the ranking.
+      { $match: { currentPurchasePrice: { $gt: 0 } } },
+      {
+        $addFields: {
+          profit: { $subtract: ['$revenue', '$cost'] },
+          margin: {
+            $cond: [
+              { $gt: ['$revenue', 0] },
+              {
+                $multiply: [{ $divide: [{ $subtract: ['$revenue', '$cost'] }, '$revenue'] }, 100],
+              },
+              0,
+            ],
+          },
+        },
+      },
+      { $sort: { [metric]: -1, unitsSold: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          productId: '$_id',
+          name: 1,
+          unitsSold: 1,
+          revenue: 1,
+          cost: 1,
+          profit: 1,
+          margin: 1,
+        },
+      },
+    ]);
+
+    const data = aggregation.map((row) => ({
+      productId: String(row.productId),
+      name: row.name,
+      unitsSold: row.unitsSold ?? 0,
+      revenue: roundMoney(row.revenue ?? 0),
+      cost: roundMoney(row.cost ?? 0),
+      profit: roundMoney(row.profit ?? 0),
+      margin: roundMoney(row.margin ?? 0),
+    }));
+
+    return { metric, data };
   }
 
   private buildDailySeries({
@@ -228,13 +368,15 @@ export class DashboardService {
   }: {
     startDate: string;
     dayCount: number;
-    groupedLookup: Map<string, { revenue: number; orderCount: number }>;
+    groupedLookup: Map<string, { revenue: number; cost: number; orderCount: number }>;
   }) {
     const points: Array<{
       bucketStart: string;
       bucketEnd: string;
       label: string;
       revenue: number;
+      cost: number;
+      profit: number;
       orderCount: number;
     }> = [];
 
@@ -242,11 +384,16 @@ export class DashboardService {
       const key = this.shiftDateKey(startDate, index);
       const aggregated = groupedLookup.get(key);
 
+      const revenue = roundMoney(aggregated?.revenue ?? 0);
+      const cost = roundMoney(aggregated?.cost ?? 0);
+
       points.push({
         bucketStart: key,
         bucketEnd: key,
         label: this.formatChartLabel(key),
-        revenue: roundMoney(aggregated?.revenue ?? 0),
+        revenue,
+        cost,
+        profit: roundMoney(revenue - cost),
         orderCount: aggregated?.orderCount ?? 0,
       });
     }
@@ -261,13 +408,15 @@ export class DashboardService {
   }: {
     startDate: string;
     endDate: string;
-    groupedLookup: Map<string, { revenue: number; orderCount: number }>;
+    groupedLookup: Map<string, { revenue: number; cost: number; orderCount: number }>;
   }) {
     const points: Array<{
       bucketStart: string;
       bucketEnd: string;
       label: string;
       revenue: number;
+      cost: number;
+      profit: number;
       orderCount: number;
     }> = [];
 
@@ -281,11 +430,16 @@ export class DashboardService {
       const weekKey = currentWeekStart;
       const aggregated = groupedLookup.get(weekKey);
 
+      const revenue = roundMoney(aggregated?.revenue ?? 0);
+      const cost = roundMoney(aggregated?.cost ?? 0);
+
       points.push({
         bucketStart: bucketStartDate,
         bucketEnd: bucketEndDate,
         label: this.formatChartLabel(bucketStartDate),
-        revenue: roundMoney(aggregated?.revenue ?? 0),
+        revenue,
+        cost,
+        profit: roundMoney(revenue - cost),
         orderCount: aggregated?.orderCount ?? 0,
       });
 

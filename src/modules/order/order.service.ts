@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Order } from '../../schemas/order.schema';
@@ -36,10 +41,10 @@ export class OrderService {
   async create(userId: string, dto: CreateOrderDto): Promise<any> {
     // Retry on duplicate invoiceNumber: the invoice counter is incremented
     // outside the transaction (so it always moves forward even when an attempt
-    // aborts). If a collision still occurs — e.g. the counter is behind existing
-    // orders — we regenerate the next number and retry instead of failing.
-    const MAX_ATTEMPTS = 5;
-    let lastError: unknown;
+    // aborts). If a collision still occurs — e.g. the counter has fallen behind
+    // existing orders (legacy/imported data, manual edits) — we fast-forward the
+    // counter to the current max and regenerate instead of failing.
+    const MAX_ATTEMPTS = 8;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const session = await this.orderModel.db.startSession();
@@ -86,9 +91,11 @@ export class OrderService {
             productId: product._id,
             quantity: item.quantity,
             unitPrice: product.unitPrice,
+            costPrice: product.purchasePrice ?? 0, // snapshot supplier cost at order time
             discountPercentage: item.discountPercentage ?? 0,
             discountAmount: 0, // schema pre-hook will calculate
             lineTotal: 0, // schema pre-hook will calculate
+            lineCost: 0, // schema pre-hook will calculate
           };
         });
 
@@ -137,14 +144,20 @@ export class OrderService {
         await session.endSession();
 
         if (this.isDuplicateInvoiceError(err) && attempt < MAX_ATTEMPTS - 1) {
-          lastError = err;
+          // Self-heal: the counter is behind the real invoice numbers. Pull it
+          // forward to the current max so the next attempt allocates an unused
+          // number. Runs outside the (aborted) transaction.
+          await this.syncInvoiceCounterToMax(userId);
           continue;
         }
         throw err;
       }
     }
 
-    throw lastError;
+    // Retries exhausted: surface a clean 409 instead of leaking a raw 500.
+    throw new ConflictException(
+      'Could not allocate a unique invoice number. Please retry the request.',
+    );
   }
 
   /**
@@ -152,8 +165,13 @@ export class OrderService {
    * userId_1_invoiceNumber_1 unique index.
    */
   private isDuplicateInvoiceError(err: unknown): boolean {
+    return this.isDuplicateKeyError(err, 'invoiceNumber');
+  }
+
+  /** Detects a MongoDB duplicate-key (E11000) error involving a given field. */
+  private isDuplicateKeyError(err: unknown, field: string): boolean {
     const e = err as { code?: number; keyPattern?: Record<string, unknown> };
-    return e?.code === 11000 && !!e?.keyPattern && 'invoiceNumber' in e.keyPattern;
+    return e?.code === 11000 && !!e?.keyPattern && field in e.keyPattern;
   }
 
   async findAll(userId: string, query: OrderQueryDto) {
@@ -604,13 +622,68 @@ export class OrderService {
   private async generateInvoiceNumber(userId: string): Promise<string> {
     const key = this.buildCounterKey(userId, new Date());
 
-    const counter = await this.counterModel.findOneAndUpdate(
-      { key },
-      { $inc: { seq: 1 } },
-      { returnDocument: 'after', upsert: true },
-    );
+    // findOneAndUpdate(upsert) can rarely throw E11000 on the counter's unique
+    // `key` index when two concurrent requests create the same monthly counter
+    // at once. Retrying resolves it: the doc then exists and we take the atomic
+    // $inc path.
+    const COUNTER_ATTEMPTS = 3;
+    for (let attempt = 0; attempt < COUNTER_ATTEMPTS; attempt++) {
+      try {
+        const counter = await this.counterModel.findOneAndUpdate(
+          { key },
+          { $inc: { seq: 1 } },
+          { returnDocument: 'after', upsert: true },
+        );
 
-    return this.buildInvoiceString(key, counter.seq);
+        return this.buildInvoiceString(key, counter.seq);
+      } catch (err) {
+        if (this.isDuplicateKeyError(err, 'key') && attempt < COUNTER_ATTEMPTS - 1) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    // Unreachable in practice; keeps the return type total.
+    throw new ConflictException('Could not allocate an invoice number.');
+  }
+
+  /**
+   * Fast-forwards the current month's invoice counter so its seq is at least the
+   * highest sequence already persisted for this user/month. Uses $max, so it
+   * only ever moves the counter forward and is safe under concurrency. Called
+   * when a duplicate invoiceNumber is detected so the counter "catches up" to
+   * real data (e.g. legacy/imported orders the counter never accounted for).
+   */
+  private async syncInvoiceCounterToMax(userId: string): Promise<void> {
+    const key = this.buildCounterKey(userId, new Date());
+    const yyMm = key.split('-').slice(-1)[0];
+    const prefix = `INV-${yyMm}-`;
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Parse the numeric suffix from each matching invoice and take the true max.
+    // Aggregation avoids relying on lexicographic ordering of zero-padded values.
+    const result = await this.orderModel.aggregate<{ maxSeq: number }>([
+      {
+        $match: {
+          ...userScopeFilter(userId),
+          invoiceNumber: { $regex: `^${escapedPrefix}\\d+$` },
+        },
+      },
+      {
+        $project: {
+          seq: { $toInt: { $substrBytes: ['$invoiceNumber', prefix.length, 16] } },
+        },
+      },
+      { $group: { _id: null, maxSeq: { $max: '$seq' } } },
+    ]);
+
+    const maxSeq = result.length ? result[0].maxSeq : 0;
+    if (!Number.isFinite(maxSeq) || maxSeq <= 0) {
+      return;
+    }
+
+    await this.counterModel.updateOne({ key }, { $max: { seq: maxSeq } }, { upsert: true });
   }
 
   /**
