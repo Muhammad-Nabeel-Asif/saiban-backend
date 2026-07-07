@@ -69,8 +69,10 @@ missing or zero) still applies and is the right behavior — keep it.
   for cost/profit on historical orders, since real data now exists (keep the
   zero/missing-cost guard for the edge cases above).
 
-## Open question back to FE (unchanged)
+## Open question back to FE — RESOLVED
 
-- Should `GET /api/dashboard/top-products` support a date-range filter (e.g. last
-  30d) like the revenue trend, or is all-time fine? Currently all-time over
-  COMPLETED orders.
+- `GET /api/dashboard/top-products` date range: **all-time is fine for v1** (FE
+  decision). The card has no time selector and reads as "best performers
+  overall," which matches merchant expectations. An optional `range` param can be
+  added later if seasonal comparison becomes important — not blocking. Endpoint
+  stays all-time over COMPLETED orders.

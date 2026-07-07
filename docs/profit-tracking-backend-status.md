@@ -265,6 +265,8 @@ Response:
 1. Historical order backfill is now available (`npm run orders:backfill-costs`,
    see §4). Confirm you want it run in production once product costs are filled;
    until then old orders show `profit == subtotal`.
-2. Should `top-products` support a date range filter (e.g. last 30d) like the
-   revenue trend, or is all-time fine for now? Currently it's all-time over
-   COMPLETED orders.
+2. ~~Should `top-products` support a date range filter (e.g. last 30d) like the
+   revenue trend, or is all-time fine for now?~~ **Resolved (FE):** all-time is
+   fine for v1 — the card has no time selector and reads as "best performers
+   overall." Add an optional `range` param later if seasonal comparison becomes
+   important; not blocking. Endpoint stays all-time over COMPLETED orders.
