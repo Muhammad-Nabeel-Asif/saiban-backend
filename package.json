@@ -23,7 +23,9 @@
     "db:reset-seed": "ts-node -r tsconfig-paths/register scripts/reset-seed.ts",
     "products:export-costs": "ts-node -r tsconfig-paths/register scripts/backfill-purchase-price.ts export",
     "products:import-costs": "ts-node -r tsconfig-paths/register scripts/backfill-purchase-price.ts import",
-    "orders:backfill-costs": "ts-node -r tsconfig-paths/register scripts/backfill-order-costs.ts"
+    "orders:backfill-costs": "ts-node -r tsconfig-paths/register scripts/backfill-order-costs.ts",
+    "db:sync-from-prod": "bash scripts/sync-prod-to-local.sh",
+    "db:dumps:clean": "rm -rf .db-dumps backup-*/ prod-sync-*/"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.10",
