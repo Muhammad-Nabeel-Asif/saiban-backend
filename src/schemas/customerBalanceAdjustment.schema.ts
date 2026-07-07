@@ -10,7 +10,7 @@ export class CustomerBalanceAdjustment extends Document {
   @Prop({ required: true, min: 0.01 })
   amount: number;
 
-  @Prop({ required: true, enum: BalanceDirection })
+  @Prop({ required: true, enum: BalanceDirection, type: String })
   direction: BalanceDirection;
 
   @Prop()

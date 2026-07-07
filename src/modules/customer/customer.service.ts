@@ -117,6 +117,17 @@ export class CustomerService {
     return adjustment.toObject();
   }
 
+  private normalizeCustomerNote(note?: string | null): string {
+    return typeof note === 'string' ? note.trim() : '';
+  }
+
+  private withNormalizedNote<T extends { note?: string | null }>(customer: T): T & { note: string } {
+    return {
+      ...customer,
+      note: this.normalizeCustomerNote(customer.note),
+    };
+  }
+
   private async assertCustomerOwned(userId: string, customerId: string) {
     const customer = await this.customerModel
       .findOne({ _id: customerId, ...userScopeFilter(userId) })
@@ -136,7 +147,11 @@ export class CustomerService {
     session.startTransaction();
 
     try {
-      const customer = new this.customerModel({ ...customerData, ...userScopeFilter(userId) });
+      const customer = new this.customerModel({
+        ...customerData,
+        note: this.normalizeCustomerNote(customerData.note),
+        ...userScopeFilter(userId),
+      });
       await customer.save({ session });
 
       if (balanceAdjustment) {
@@ -146,7 +161,7 @@ export class CustomerService {
       await session.commitTransaction();
       session.endSession();
 
-      return customer.toObject();
+      return this.withNormalizedNote(customer.toObject());
     } catch (err) {
       await session.abortTransaction();
       session.endSession();
@@ -172,7 +187,7 @@ export class CustomerService {
     ]);
 
     return {
-      data,
+      data: data.map((customer) => this.withNormalizedNote(customer)),
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -190,7 +205,7 @@ export class CustomerService {
     ]);
 
     return {
-      ...customer,
+      ...this.withNormalizedNote(customer),
       balance,
       openingBalanceNote: this.resolveOpeningBalanceNote(customer, earliestAdjustment),
     };
@@ -238,8 +253,15 @@ export class CustomerService {
   }
 
   async update(userId: string, id: string, dto: UpdateCustomerDto) {
+    const updatePayload = { ...dto };
+    if ('note' in dto) {
+      updatePayload.note = this.normalizeCustomerNote(dto.note);
+    }
+
     const customer = await this.customerModel
-      .findOneAndUpdate({ _id: id, ...userScopeFilter(userId) }, dto, { returnDocument: 'after' })
+      .findOneAndUpdate({ _id: id, ...userScopeFilter(userId) }, updatePayload, {
+        returnDocument: 'after',
+      })
       .lean()
       .exec();
 
@@ -247,7 +269,7 @@ export class CustomerService {
       throw new NotFoundException('Customer not found');
     }
 
-    return customer;
+    return this.withNormalizedNote(customer);
   }
 
   async remove(userId: string, id: string) {

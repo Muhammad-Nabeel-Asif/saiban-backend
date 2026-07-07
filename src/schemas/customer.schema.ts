@@ -27,6 +27,9 @@ export class Customer extends Document {
   @Prop()
   state: string;
 
+  @Prop({ default: '' })
+  note: string;
+
   @Prop()
   createdAt: Date;
 
