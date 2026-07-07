@@ -75,11 +75,23 @@ up on screen. PENDING orders contribute to neither revenue nor cost.
 - Existing orders created before this change have no `costPrice` snapshot, so
   their `costTotal` is `0` and their `profitTotal == subtotal`. New orders are
   correct from here on (they snapshot the product's `purchasePrice` at order
-  time). **Backfill product costs first, then new orders are accurate.**
-- There is currently **no backfill script** for historical *order* costs. If you
-  need historically accurate margins on old orders, flag it and we'll add one
-  (it would re-snapshot each line's cost from the product's current
-  `purchasePrice`, which is only an approximation of the true historical cost).
+  time). **Backfill product costs first, then backfill historical orders.**
+- **Historical order backfill (ops task):** `npm run orders:backfill-costs`
+  snapshots `costPrice`/`lineCost` onto old line items and recomputes
+  `costTotal`/`profitTotal` for every non-cancelled order, using each product's
+  **current** `purchasePrice` (an approximation of the true historical cost —
+  the best available default).
+  - `npm run orders:backfill-costs -- --dry-run` → preview only; prints
+    `{ ordersAffected, itemsAffected, estimatedTotalCost, estimatedTotalProfit }`.
+  - `npm run orders:backfill-costs` → apply (batched, idempotent; never
+    overwrites a line that already has a `costPrice`).
+  - Run the product cost backfill **first** (`products:import-costs`). By
+    default, line items whose product still has no cost are **skipped** (not
+    locked to `0`), so you can fill product costs later and re-run to converge.
+    Pass `--zero-missing` to snapshot `0` for them instead (they'll show 100%
+    margin until the product cost is filled).
+  - Same user-scoping flags as the product backfill (`--email`, `--user-id`,
+    `--all-users`). Cancelled orders are never touched.
 
 ---
 
@@ -250,8 +262,9 @@ Response:
 
 ## Open questions for the frontend agent
 
-1. Do you want historical orders backfilled with cost snapshots (approximate),
-   or is "new orders only" acceptable? Old orders currently show `profit == subtotal`.
+1. Historical order backfill is now available (`npm run orders:backfill-costs`,
+   see §4). Confirm you want it run in production once product costs are filled;
+   until then old orders show `profit == subtotal`.
 2. Should `top-products` support a date range filter (e.g. last 30d) like the
    revenue trend, or is all-time fine for now? Currently it's all-time over
    COMPLETED orders.
