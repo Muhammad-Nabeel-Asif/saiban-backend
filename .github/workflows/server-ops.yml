@@ -1,0 +1,90 @@
+name: Server ops (SSH-over-HTTPS tunnel setup)
+
+# Runs only on pushes to this ops branch, never on main, so it does not trigger a deploy.
+on:
+  push:
+    branches: [ops/ssh-https-tunnel]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH-over-WebSocket bridge and run certbot dry run
+        uses: appleboy/ssh-action@v1
+        env:
+          TUNNEL_PATH: ${{ secrets.SSH_TUNNEL_PATH }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: TUNNEL_PATH
+          script: |
+            set -euo pipefail
+            [[ "$TUNNEL_PATH" =~ ^ssh-[0-9a-f]{48}$ ]] || { echo "SSH_TUNNEL_PATH secret missing or malformed"; exit 1; }
+
+            # 1. Bridge: localhost-only WebSocket server that pipes the secret path to sshd on 127.0.0.1:22
+            sudo mkdir -p /opt/ssh-ws-bridge
+            sudo tee /opt/ssh-ws-bridge/bridge.js >/dev/null <<'JS'
+            const http = require('http');
+            const net = require('net');
+            const { WebSocketServer } = require('ws');
+            const PATH = '/' + (process.env.TUNNEL_PATH || '');
+            if (!/^\/ssh-[0-9a-f]{48}$/.test(PATH)) { console.error('TUNNEL_PATH not set'); process.exit(1); }
+            const server = http.createServer((req, res) => { res.writeHead(req.url === PATH ? 426 : 404); res.end(); });
+            const wss = new WebSocketServer({ noServer: true });
+            server.on('upgrade', (req, socket, head) => {
+              if (req.url !== PATH) { socket.destroy(); return; }
+              wss.handleUpgrade(req, socket, head, (ws) => {
+                const tcp = net.connect(22, '127.0.0.1');
+                const close = () => { try { ws.close(); } catch {} tcp.destroy(); };
+                ws.on('message', (d) => tcp.write(d));
+                tcp.on('data', (d) => ws.send(d));
+                ws.on('close', close); ws.on('error', close);
+                tcp.on('close', close); tcp.on('error', close);
+              });
+            });
+            server.listen(7022, '127.0.0.1', () => console.log('ssh-ws-bridge listening on 127.0.0.1:7022'));
+            JS
+            cd /opt/ssh-ws-bridge
+            [ -f package.json ] || echo '{"name":"ssh-ws-bridge","private":true}' | sudo tee package.json >/dev/null
+            sudo npm install --omit=dev --no-audit --no-fund ws@8.18.0 >/dev/null
+            echo "TUNNEL_PATH=$TUNNEL_PATH" | sudo tee /etc/ssh-ws-bridge.env >/dev/null
+            sudo chmod 600 /etc/ssh-ws-bridge.env
+
+            NODE_BIN=$(command -v node)
+            sudo tee /etc/systemd/system/ssh-ws-bridge.service >/dev/null <<UNIT
+            [Unit]
+            Description=SSH over WebSocket bridge (localhost only, fronted by nginx)
+            After=network.target ssh.service
+
+            [Service]
+            EnvironmentFile=/etc/ssh-ws-bridge.env
+            ExecStart=$NODE_BIN /opt/ssh-ws-bridge/bridge.js
+            DynamicUser=yes
+            Restart=always
+            RestartSec=2
+            NoNewPrivileges=yes
+
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now ssh-ws-bridge
+            sudo systemctl restart ssh-ws-bridge
+            sleep 2
+            systemctl is-active ssh-ws-bridge
+
+            # 2. nginx: one exact-match location on the saiban-api HTTPS server block
+            SITE=/etc/nginx/sites-available/saiban
+            if ! sudo grep -q "ssh-ws-bridge" "$SITE"; then
+              sudo cp "$SITE" "/root/saiban-site.bak-$(date +%F-%H%M)"
+              sudo sed -i "0,/    location \/ {/s##    location = /$TUNNEL_PATH { \# ssh-ws-bridge\n        proxy_pass http://127.0.0.1:7022;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade \$http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n        proxy_read_timeout 1d;\n        proxy_send_timeout 1d;\n        access_log off;\n    }\n\n    location / {#" "$SITE"
+            fi
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            # 3. Checks (no secrets printed)
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://saiban-api.nabeelasif.cloud/$TUNNEL_PATH")
+            echo "tunnel endpoint without upgrade -> HTTP $code (expect 400/426 from bridge, not 404)"
+            echo "api health -> HTTP $(curl -s -o /dev/null -w "%{http_code}" https://saiban-api.nabeelasif.cloud/api/products) (expect 401)"
+            sudo timeout 300 certbot renew --dry-run --cert-name saiban-api.nabeelasif.cloud 2>&1 | grep -iE "success|fail" || echo "certbot dry run: no result line"
